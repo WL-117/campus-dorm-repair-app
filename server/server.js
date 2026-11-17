@@ -2,8 +2,8 @@
 /**
  * 校园宿舍线上报修 APP —— 后端服务入口
  * ------------------------------------------------------------------
- * 技术选型：Node.js 内置 http 模块（零第三方依赖，装好 Node 即可运行）
- * 数据存储：JSON 文件持久化（server/data/db.json）
+ * 技术选型：Node.js 内置 http 模块 + mysql2 访问 MySQL 8.0
+ * 数据存储：MySQL（库名与连接信息见 server/.env，表结构见 server/schema.sql）
  * 接口风格：RESTful，统一返回 { code, message, data }，code = 0 表示业务成功
  *
  * 启动：  node server.js           （或 npm start）
@@ -13,12 +13,13 @@
 
 const http = require('http')
 const os = require('os')
+const config = require('./config')
 const db = require('./db')
 const routes = require('./routes')
 
-const PORT = Number(process.env.PORT || 3000)
-const HOST = process.env.HOST || '0.0.0.0'
-const API_PREFIX = '/api'
+const PORT = config.port
+const HOST = config.host
+const API_PREFIX = config.apiPrefix
 
 /* -------------------------------- 工具方法 -------------------------------- */
 
@@ -123,41 +124,45 @@ const server = http.createServer(function (req, res) {
     const ctx = { token: token, headers: req.headers }
     if (token) params['token'] = token
 
-    let result
-    try {
-      result = routes.handle(req.method, path, params, ctx)
-    } catch (e) {
-      console.error('[error] ' + req.method + ' ' + path + ' -> ' + e.message)
-      result = routes.fail('服务端异常：' + e.message)
-    }
-
-    const status = result.code === 0 ? 200 : 200 // 业务失败仍返回 200，由 code 区分，前端统一处理
-    log(req.method, path, status, Date.now() - start, 'code=' + result.code + ' ' + result.message)
-    sendJson(res, status, result)
+    // 路由层已是 async（数据层为 MySQL），这里必须 await
+    return routes.handle(req.method, path, params, ctx).then(function (result) {
+      // 业务失败仍返回 200，由 code 区分，前端统一处理
+      const status = 200
+      log(req.method, path, status, Date.now() - start, 'code=' + result.code + ' ' + result.message)
+      sendJson(res, status, result)
+    })
+  }).catch(function (e) {
+    console.error('[error] ' + req.method + ' ' + path + ' -> ' + e.message)
+    sendJson(res, 200, routes.fail('服务端异常：' + e.message))
   })
 })
 
 /* --------------------------------- 启动 ---------------------------------- */
 
-db.load()
-
-server.listen(PORT, HOST, function () {
-  const ips = lanAddresses()
-  console.log('')
-  console.log('  校园宿舍线上报修 APP —— 后端服务已启动')
-  console.log('  ------------------------------------------------------------')
-  console.log('  本机访问：        http://127.0.0.1:' + PORT + '/api')
-  ips.forEach(function (ip) {
-    console.log('  局域网 / 真机访问：http://' + ip + ':' + PORT + '/api')
+db.init().then(function () {
+  server.listen(PORT, HOST, function () {
+    const ips = lanAddresses()
+    console.log('')
+    console.log('  校园宿舍线上报修 APP —— 后端服务已启动')
+    console.log('  ------------------------------------------------------------')
+    console.log('  本机访问：        http://127.0.0.1:' + PORT + '/api')
+    ips.forEach(function (ip) {
+      console.log('  局域网 / 真机访问：http://' + ip + ':' + PORT + '/api')
+    })
+    console.log('  Android 模拟器：   http://10.0.2.2:' + PORT + '/api')
+    console.log('  数据库：          mysql://' + config.mysql.user + '@' + config.mysql.host + ':' +
+      config.mysql.port + '/' + config.mysql.database)
+    console.log('  ------------------------------------------------------------')
+    console.log('  已注册接口：')
+    routes.ROUTES.forEach(function (r) {
+      console.log('    ' + (r.method + '        ').slice(0, 8) + r.path)
+    })
+    console.log('')
   })
-  console.log('  Android 模拟器：   http://10.0.2.2:' + PORT + '/api')
-  console.log('  数据文件：        ' + require('path').join(__dirname, 'data', 'db.json'))
-  console.log('  ------------------------------------------------------------')
-  console.log('  已注册接口：')
-  routes.ROUTES.forEach(function (r) {
-    console.log('    ' + (r.method + '        ').slice(0, 8) + r.path)
-  })
-  console.log('')
+}).catch(function (e) {
+  console.error('[error] 数据库初始化失败：' + e.message)
+  console.error('        请确认 MySQL 8.0 服务已启动，并检查 server/.env 中的 DB_* 配置')
+  process.exit(1)
 })
 
 server.on('error', function (err) {
@@ -169,9 +174,10 @@ server.on('error', function (err) {
   process.exit(1)
 })
 
-// 优雅退出：Ctrl + C 时保存数据
+// 优雅退出：Ctrl + C 时关闭连接池
 process.on('SIGINT', function () {
-  db.save()
-  console.log('\n[server] 已停止，数据已保存')
-  process.exit(0)
+  db.close().catch(function () { }).then(function () {
+    console.log('\n[server] 已停止')
+    process.exit(0)
+  })
 })

@@ -1,12 +1,13 @@
 # 校园宿舍线上报修 APP
 
 > 学生扫码报修、管理端派单处理的一体化宿舍报修系统。
-> uni-app x（uvue / uts）前端 + Node.js 零依赖后端，一套代码跑 H5、Android、iOS。
+> uni-app x（uvue / uts）前端 + Node.js + MySQL 8.0 后端，一套代码跑 H5、Android、iOS。
 
 <p>
   <img src="https://img.shields.io/badge/uni--app%20x-uvue%20%2B%20uts-2F4053" alt="uni-app x">
   <img src="https://img.shields.io/badge/Vue-3-4FC08D" alt="Vue 3">
-  <img src="https://img.shields.io/badge/Node.js-%E9%9B%B6%E4%BE%9D%E8%B5%96-339933" alt="Node.js">
+  <img src="https://img.shields.io/badge/Node.js-18%2B-339933" alt="Node.js">
+  <img src="https://img.shields.io/badge/MySQL-8.0-4479A1" alt="MySQL">
   <img src="https://img.shields.io/badge/status-done-success" alt="status">
 </p>
 
@@ -47,7 +48,7 @@
 
 - 平台总览：用户数、各状态工单数、紧急工单、今日新增
 - 工单管理：推进状态（待处理 → 维修中 → 已完成）、填写处理备注、删除工单
-- 用户管理：分页 + 角色筛选 + 关键字，注销用户（级联清理工单，保留最后一个管理员）
+- 用户管理：分页 + 角色筛选 + 关键字，注销用户（外键级联清理工单，保留最后一个管理员）
 - 公告管理：发布 / 修改 / 删除
 
 ## 技术栈
@@ -56,8 +57,9 @@
 | --- | --- |
 | 前端框架 | uni-app x，uvue 页面 + uts 逻辑，Vue 3 语法 |
 | 状态与请求 | 自写 `store` / `http` / `convert` 层，内置多地址自动探测 |
-| 后端 | Node.js 内置 `http` 模块，**零第三方依赖**，15 个 RESTful 接口 + 健康检查 |
-| 数据 | JSON 文件持久化（`server/data/db.json`），三张表 + 自动写入演示数据 |
+| 后端 | Node.js 内置 `http` 模块 + `mysql2`，15 个业务接口 + 8 个管理端接口 + 健康检查，全部 async |
+| 数据库 | MySQL 8.0（`dorm_repair` 库，三张 InnoDB 表，唯一键 / 联合索引 / 外键级联，DDL 见 `server/schema.sql`） |
+| 查询下推 | 分页、状态筛选、关键字搜索、统计聚合均在 SQL 中完成（`LIMIT/OFFSET`、`LIKE`、`SUM(CASE)`） |
 | 双数据源 | `common/mock-server.uts` 提供本地模拟后端，改一个开关即可在「真实后端 / 模拟后端」之间切换 |
 
 ## 目录结构
@@ -75,30 +77,50 @@
 │  ├─ user/                   个人中心
 │  └─ admin/                  管理端（总览、工单、用户、公告）
 ├─ common/                      请求层、状态管理、类型定义、模拟后端、工具
-├─ server/                      后端服务（详见 server/README.md）
+├─ server/                      后端服务（MySQL 版，详见 server/README.md）
 ├─ static/                      静态资源
 └─ docs/                        架构图、流程图、界面截图
 ```
 
 ## 快速开始
 
-### 1. 启动后端
+### 1. 准备数据库
+
+需要本机已安装并启动 **MySQL 8.0**。进入后端目录，复制环境变量模板并填入账号密码：
 
 ```bash
 cd server
-node server.js        # 默认 http://127.0.0.1:3000/api
-npm test              # 接口自测（需服务已启动）
-node db.js --reset    # 数据恢复为演示数据
+npm install            # 安装 mysql2（唯一依赖）
+copy .env.example .env  # macOS/Linux 用 cp
+```
+
+```ini
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=你的密码
+DB_NAME=dorm_repair
+```
+
+> `.env` 已在 `.gitignore` 中，密码不会进仓库。
+
+### 2. 初始化并启动后端
+
+```bash
+npm run db:init        # 自动建库 dorm_repair + 建三张表 + 写入演示数据
+npm start              # 默认 http://127.0.0.1:3000/api
+npm test               # 接口自测（48 项，需服务已启动）
+npm run reset          # 数据恢复为演示数据
 ```
 
 Windows 也可以直接双击 `server/start-server.bat`。
 
-### 2. 运行前端
+### 3. 运行前端
 
 用 HBuilderX 打开本目录，选择“运行 → 运行到浏览器 / 手机模拟器 / 真机”。
 请求层默认连接真实后端（`common/http.uts` 中 `USE_REAL_SERVER = true`），并按 127.0.0.1 → 10.0.2.2 → 局域网 IP 的顺序自动探测可用地址。
 
-### 3. 演示账号
+### 4. 演示账号
 
 | 角色 | 账号 | 密码 |
 | --- | --- | --- |
@@ -108,13 +130,15 @@ Windows 也可以直接双击 `server/start-server.bat`。
 
 ## 接口与数据库
 
-15 个业务接口 + 健康检查，管理端另有一组接口并统一做角色校验；三张表 `t_user` / `t_repair_order` / `t_notice`。
-完整清单、参数约定、数据模型与踩坑说明见 [server/README.md](server/README.md)。
+15 个业务接口 + 8 个管理端接口 + 健康检查，统一返回 `{ code, message, data }`；管理端统一做角色校验。
+数据库为 MySQL `dorm_repair` 库，三张表 `t_user` / `t_repair_order` / `t_notice`，可直接用 Navicat 连接 `127.0.0.1:3306` 查看。
+完整接口清单、表结构说明、迁移与踩坑说明见 [server/README.md](server/README.md)。
 
 ## 说明
 
 - 本项目为课程设计作品，演示账号密码仅用于本地运行，请勿用于生产环境。
-- 后端为单机 JSON 持久化，未做并发锁与权限加密，适合演示与课程场景。
+- 密码当前为明文存储，仅适合课程演示；若用于真实环境应改为哈希（如 bcrypt）并配合 token 过期机制。
+- `server/data/db.json` 为旧版 JSON 数据文件，服务已不再读写，仅保留用于 `npm run db:import` 一次性迁移。
 
 ---
 

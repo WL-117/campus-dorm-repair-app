@@ -2,14 +2,19 @@
   "name": "dorm-repair-server",
   "version": "1.0.0",
   "private": true,
-  "description": "校园宿舍线上报修 APP 后端服务（Node.js 原生 HTTP 模块实现，零第三方依赖）",
+  "description": "校园宿舍线上报修 APP 后端服务（Node.js 原生 HTTP 模块 + MySQL 8.0）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "test": "node test.js",
+    "db:init": "node db.js",
+    "db:import": "node scripts/import-json.js",
     "reset": "node db.js --reset"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "mysql2": "^3.24.6"
   }
 }

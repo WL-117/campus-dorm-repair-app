@@ -1,6 +1,6 @@
 'use strict'
 /**
- * 后端业务路由层（Router / Controller）
+ * 后端业务路由层（Router / Controller）—— MySQL 版
  * ------------------------------------------------------------------
  * 完全遵循 RESTful 风格，接口与前端 common/api.uts、common/mock-server.uts 一一对应：
  *    POST   /user/register      用户注册（新增）
@@ -20,6 +20,9 @@
  *    GET    /notice/detail      公告详情
  *    GET    /health             服务健康检查
  * 统一返回 ApiResult：{ code, message, data }，code = 0 表示业务成功
+ *
+ * 数据层（server/db.js）已切换为 MySQL，所有 handler 均为 async，
+ * 分页 / 筛选 / 关键字 / 统计全部下推到 SQL 执行。
  */
 
 const db = require('./db')
@@ -44,7 +47,7 @@ function str(params, key) {
 
 function num(params, key, def) {
   const v = Number(params[key])
-  if (isNaN(v)) return def === undefined ? 0 : def
+  if (isNaN(v) || v <= 0) return def === undefined ? 0 : def
   return v
 }
 
@@ -66,18 +69,18 @@ function resolveUserId(params, ctx) {
 }
 
 /** 取当前用户实体，未找到返回 null */
-function currentUser(params, ctx) {
+async function currentUser(params, ctx) {
   const uid = resolveUserId(params, ctx)
   if (!uid) return null
-  return db.findUser(uid)
+  return db.getUser(uid)
 }
 
 /**
  * 管理员权限校验
  * 通过返回用户实体，未登录或无权限返回 null（调用方直接返回 fail 提示）
  */
-function requireAdmin(params, ctx) {
-  const user = currentUser(params, ctx)
+async function requireAdmin(params, ctx) {
+  const user = await currentUser(params, ctx)
   if (!user) return null
   if (user.role !== 'admin') return null
   return user
@@ -86,7 +89,7 @@ function requireAdmin(params, ctx) {
 /* --------------------------------- 用户模块 --------------------------------- */
 
 /** POST /user/register 用户注册 */
-function handleRegister(params) {
+async function handleRegister(params) {
   const username = str(params, 'username')
   const password = str(params, 'password')
   const nickname = str(params, 'nickname')
@@ -97,8 +100,8 @@ function handleRegister(params) {
   if (!db.isPhone(phone)) return fail('请输入正确的 11 位手机号')
   if (username.length < 4) return fail('账号长度不能少于 4 位')
   if (password.length < 6) return fail('密码长度不能少于 6 位')
-  if (db.findUserByUsername(username)) return fail('该账号已被注册，请直接登录')
-  if (db.findUserByPhone(phone)) return fail('该手机号已注册，请直接登录')
+  if (await db.getUserByUsername(username)) return fail('该账号已被注册，请直接登录')
+  if (await db.getUserByPhone(phone)) return fail('该手机号已注册，请直接登录')
 
   const user = {
     id: db.genId('u_'),
@@ -112,18 +115,18 @@ function handleRegister(params) {
     role: 'student', // 注册一律为学生，管理员账号由系统预置
     createTime: db.nowTime()
   }
-  db.addUser(user)
+  await db.addUser(user)
   return ok(db.publicUser(user))
 }
 
 /** POST /user/login 用户登录 */
-function handleLogin(params) {
+async function handleLogin(params) {
   const username = str(params, 'username')
   const password = str(params, 'password')
   if (username.length === 0) return fail('请输入账号')
   if (password.length === 0) return fail('请输入密码')
 
-  const user = db.findUserByAccount(username)
+  const user = await db.getUserByAccount(username)
   if (!user) return fail('账号不存在，请先注册')
   if (user.password !== password) return fail('账号或密码错误')
 
@@ -134,15 +137,15 @@ function handleLogin(params) {
 }
 
 /** GET /user/info 查询用户信息 */
-function handleUserInfo(params, ctx) {
-  const user = currentUser(params, ctx)
+async function handleUserInfo(params, ctx) {
+  const user = await currentUser(params, ctx)
   if (!user) return fail('登录状态已失效，请重新登录')
   return ok(db.publicUser(user))
 }
 
 /** PUT /user/update 修改用户信息 */
-function handleUserUpdate(params, ctx) {
-  const user = currentUser(params, ctx)
+async function handleUserUpdate(params, ctx) {
+  const user = await currentUser(params, ctx)
   if (!user) return fail('登录状态已失效，请重新登录')
 
   const nickname = str(params, 'nickname')
@@ -151,23 +154,25 @@ function handleUserUpdate(params, ctx) {
   const dorm = str(params, 'dorm')
   const phone = str(params, 'phone')
 
-  if (nickname.length > 0) user.nickname = nickname
-  if (avatar.length > 0) user.avatar = avatar
-  if (gender.length > 0) user.gender = gender
-  if (dorm.length > 0) user.dorm = dorm
+  const patch = {}
+  if (nickname.length > 0) patch.nickname = nickname
+  if (avatar.length > 0) patch.avatar = avatar
+  if (gender.length > 0) patch.gender = gender
+  if (dorm.length > 0) patch.dorm = dorm
   if (phone.length > 0) {
     if (!db.isPhone(phone)) return fail('请输入正确的 11 位手机号')
-    user.phone = phone
+    patch.phone = phone
   }
-  db.saveUsers()
-  return ok(db.publicUser(user))
+
+  const updated = await db.updateUser(user.id, patch)
+  return ok(db.publicUser(updated))
 }
 
 /* --------------------------------- 工单模块 --------------------------------- */
 
 /** POST /repair/create 提交报修 */
-function handleRepairCreate(params, ctx) {
-  const user = currentUser(params, ctx)
+async function handleRepairCreate(params, ctx) {
+  const user = await currentUser(params, ctx)
   if (!user) return fail('请先登录后再提交报修')
 
   const category = str(params, 'category')
@@ -202,12 +207,12 @@ function handleRepairCreate(params, ctx) {
     remark: '',
     logs: [{ time: now, content: '学生提交报修申请，等待宿管中心受理' }]
   }
-  db.addOrder(order)
+  await db.addOrder(order)
   return ok(db.orderToPlain(order))
 }
 
 /** GET /repair/list 工单列表（分页 + 状态筛选 + 关键字查询） */
-function handleRepairList(params, ctx) {
+async function handleRepairList(params, ctx) {
   const page = num(params, 'page', 1)
   const size = num(params, 'size', 10)
   const status = str(params, 'status')
@@ -215,176 +220,138 @@ function handleRepairList(params, ctx) {
   const scope = str(params, 'scope')
   const userId = resolveUserId(params, ctx)
 
-  const filtered = db.allOrders().filter(function (o) {
-    if (scope === 'mine' && o.userId !== userId) return false
-    if (status.length > 0 && o.status !== status) return false
-    if (keyword.length > 0) {
-      const hit = o.orderNo.indexOf(keyword) >= 0 ||
-        o.description.indexOf(keyword) >= 0 ||
-        o.category.indexOf(keyword) >= 0
-      if (!hit) return false
-    }
-    return true
-  })
-
-  const start = (page - 1) * size
-  const list = filtered.slice(start, start + size).map(db.orderToPlain)
-  return ok({
-    list: list,
-    total: filtered.length,
+  const result = await db.listOrders({
+    userId: scope === 'mine' ? userId : '',
+    status: status,
+    keyword: keyword,
     page: page,
     size: size,
-    hasMore: start + list.length < filtered.length
+    admin: false
+  })
+
+  const list = result.rows.map(db.orderToPlain)
+  const start = (page - 1) * size
+  return ok({
+    list: list,
+    total: result.total,
+    page: page,
+    size: size,
+    hasMore: start + list.length < result.total
   })
 }
 
 /** GET /repair/detail 工单详情 */
-function handleRepairDetail(params) {
-  const order = db.findOrder(str(params, 'id'))
+async function handleRepairDetail(params) {
+  const order = await db.getOrder(str(params, 'id'))
   if (!order) return fail('工单不存在或已被删除')
   return ok(db.orderToPlain(order))
 }
 
 /** PUT /repair/update 修改工单 */
-function handleRepairUpdate(params) {
-  const order = db.findOrder(str(params, 'id'))
+async function handleRepairUpdate(params) {
+  const order = await db.getOrder(str(params, 'id'))
   if (!order) return fail('工单不存在或已被删除')
 
   const description = str(params, 'description')
   const room = str(params, 'room')
   const contact = str(params, 'contact')
 
-  if (description.length > 0) order.description = description
-  if (room.length > 0) order.room = room
+  const patch = { updateTime: db.nowTime() }
+  if (description.length > 0) patch.description = description
+  if (room.length > 0) patch.room = room
   if (contact.length > 0) {
     if (!db.isPhone(contact)) return fail('请输入正确的 11 位手机号')
-    order.contact = contact
+    patch.contact = contact
   }
-  order.updateTime = db.nowTime()
-  db.saveOrders()
-  return ok(db.orderToPlain(order))
+
+  const updated = await db.updateOrder(order.id, patch, null)
+  return ok(db.orderToPlain(updated))
 }
 
 /** POST /repair/cancel 取消报修 */
-function handleRepairCancel(params, ctx) {
-  const order = db.findOrder(str(params, 'id'))
+async function handleRepairCancel(params, ctx) {
+  const order = await db.getOrder(str(params, 'id'))
   if (!order) return fail('工单不存在或已被删除')
   if (order.userId !== resolveUserId(params, ctx)) return fail('只能取消本人提交的工单')
   if (order.status !== '0') return fail('只有「待处理」状态的工单可以取消')
 
-  order.status = '3'
-  order.updateTime = db.nowTime()
-  order.logs.push({ time: db.nowTime(), content: '学生主动取消该报修工单' })
-  db.saveOrders()
-  return ok(db.orderToPlain(order))
+  const now = db.nowTime()
+  const updated = await db.updateOrder(order.id, { status: '3', updateTime: now },
+    { time: now, content: '学生主动取消该报修工单' })
+  return ok(db.orderToPlain(updated))
 }
 
 /** DELETE /repair/delete 删除工单 */
-function handleRepairDelete(params, ctx) {
+async function handleRepairDelete(params, ctx) {
   const id = str(params, 'id')
-  const order = db.findOrder(id)
+  const order = await db.getOrder(id)
   if (!order) return fail('工单不存在或已被删除')
   if (order.userId !== resolveUserId(params, ctx)) return fail('只能删除本人提交的工单')
 
-  db.removeOrder(id)
+  await db.removeOrder(id)
   return ok({ id: id })
 }
 
 /** GET /stat/mine 个人工单统计 */
-function handleStat(params, ctx) {
+async function handleStat(params, ctx) {
   const userId = resolveUserId(params, ctx)
-  const stat = { total: 0, pending: 0, doing: 0, done: 0, canceled: 0 }
-  db.allOrders().forEach(function (o) {
-    if (o.userId !== userId) return
-    stat.total++
-    if (o.status === '0') stat.pending++
-    if (o.status === '1') stat.doing++
-    if (o.status === '2') stat.done++
-    if (o.status === '3') stat.canceled++
-  })
+  const stat = await db.countOrdersByStatus(userId)
   return ok(stat)
 }
 
 /* ------------------------------- 常用数据模块 ------------------------------- */
 
 /** GET /category/list 故障分类 */
-function handleCategoryList() {
+async function handleCategoryList() {
   return ok({
     list: db.DEFAULT_CATEGORIES.map(function (name) { return { name: name } })
   })
 }
 
 /** GET /tips/list 常见故障提示 */
-function handleTipsList() {
+async function handleTipsList() {
   return ok({ list: db.DEFAULT_TIPS.slice() })
 }
 
 /** GET /notice/list 公告列表 */
-function handleNoticeList() {
+async function handleNoticeList() {
+  const notices = await db.listNotices()
   return ok({
-    list: db.allNotices().map(db.noticeToPlain)
+    list: notices.map(db.noticeToPlain)
   })
 }
 
 /** GET /notice/detail 公告详情 */
-function handleNoticeDetail(params) {
-  const notice = db.findNotice(str(params, 'id'))
+async function handleNoticeDetail(params) {
+  const notice = await db.getNotice(str(params, 'id'))
   if (!notice) return fail('公告不存在')
   return ok(db.noticeToPlain(notice))
 }
 
 /** GET /health 健康检查（联调时用浏览器直接访问即可） */
-function handleHealth() {
+async function handleHealth() {
+  const c = await db.counts()
   return ok({
     service: 'dorm-repair-server',
     time: db.nowTime(),
-    users: db.allUsers().length,
-    orders: db.allOrders().length,
-    notices: db.allNotices().length
+    users: c.users,
+    orders: c.orders,
+    notices: c.notices
   })
 }
 
 /* --------------------------------- 管理端模块 --------------------------------- */
 
 /** GET /admin/stat 平台总览统计 */
-function handleAdminStat(params, ctx) {
-  const admin = requireAdmin(params, ctx)
+async function handleAdminStat(params, ctx) {
+  const admin = await requireAdmin(params, ctx)
   if (!admin) return fail('无管理员权限，请使用管理员账号登录')
-
-  const today = db.nowTime().substring(0, 10)
-  const stat = {
-    users: 0,
-    students: 0,
-    admins: 0,
-    orders: 0,
-    pending: 0,
-    doing: 0,
-    done: 0,
-    canceled: 0,
-    urgent: 0,
-    todayOrders: 0,
-    notices: db.allNotices().length
-  }
-  db.allUsers().forEach(function (u) {
-    stat.users++
-    if (u.role === 'admin') stat.admins++
-    else stat.students++
-  })
-  db.allOrders().forEach(function (o) {
-    stat.orders++
-    if (o.status === '0') stat.pending++
-    if (o.status === '1') stat.doing++
-    if (o.status === '2') stat.done++
-    if (o.status === '3') stat.canceled++
-    if (o.level === '紧急') stat.urgent++
-    if (String(o.createTime).substring(0, 10) === today) stat.todayOrders++
-  })
-  return ok(stat)
+  return ok(await db.adminStat())
 }
 
 /** GET /admin/user/list 用户列表（分页 + 关键字：昵称 / 账号 / 手机号 / 宿舍） */
-function handleAdminUserList(params, ctx) {
-  const admin = requireAdmin(params, ctx)
+async function handleAdminUserList(params, ctx) {
+  const admin = await requireAdmin(params, ctx)
   if (!admin) return fail('无管理员权限，请使用管理员账号登录')
 
   const page = num(params, 'page', 1)
@@ -392,50 +359,41 @@ function handleAdminUserList(params, ctx) {
   const role = str(params, 'role')
   const keyword = str(params, 'keyword')
 
-  const filtered = db.allUsers().filter(function (u) {
-    if (role.length > 0 && (u.role || 'student') !== role) return false
-    if (keyword.length > 0) {
-      const hit = u.nickname.indexOf(keyword) >= 0 || u.username.indexOf(keyword) >= 0 ||
-        u.phone.indexOf(keyword) >= 0 || u.dorm.indexOf(keyword) >= 0
-      if (!hit) return false
-    }
-    return true
-  })
-
+  const result = await db.listUsers({ role: role, keyword: keyword, page: page, size: size })
   const start = (page - 1) * size
-  const list = filtered.slice(start, start + size).map(function (u) {
-    const info = db.publicUser(u)
-    // 附带该用户的工单数量，方便管理端展示
-    info.orderCount = db.allOrders().filter(function (o) { return o.userId === u.id }).length
+  const list = result.rows.map(function (row) {
+    const info = db.publicUser(db.rowToUser(row))
+    // 附带该用户的工单数量（由 SQL 子查询统计），方便管理端展示
+    info.orderCount = Number(row.order_count || 0)
     return info
   })
   return ok({
     list: list,
-    total: filtered.length,
+    total: result.total,
     page: page,
     size: size,
-    hasMore: start + list.length < filtered.length
+    hasMore: start + list.length < result.total
   })
 }
 
 /** DELETE /admin/user/delete 删除用户（级联删除其工单，保留最后一个管理员） */
-function handleAdminUserDelete(params, ctx) {
-  const admin = requireAdmin(params, ctx)
+async function handleAdminUserDelete(params, ctx) {
+  const admin = await requireAdmin(params, ctx)
   if (!admin) return fail('无管理员权限，请使用管理员账号登录')
 
   const id = str(params, 'id')
   if (id === admin.id) return fail('不能删除当前登录的管理员账号')
-  const user = db.findUser(id)
+  const user = await db.getUser(id)
   if (!user) return fail('用户不存在或已被删除')
-  if (user.role === 'admin' && db.countAdmin() <= 1) return fail('系统至少需要保留一个管理员账号')
+  if (user.role === 'admin' && (await db.countAdmins()) <= 1) return fail('系统至少需要保留一个管理员账号')
 
-  db.removeUser(id)
+  await db.removeUser(id)
   return ok({ id: id })
 }
 
 /** GET /admin/order/list 工单管理列表（分页 + 状态筛选 + 关键字） */
-function handleAdminOrderList(params, ctx) {
-  const admin = requireAdmin(params, ctx)
+async function handleAdminOrderList(params, ctx) {
+  const admin = await requireAdmin(params, ctx)
   if (!admin) return fail('无管理员权限，请使用管理员账号登录')
 
   const page = num(params, 'page', 1)
@@ -443,34 +401,31 @@ function handleAdminOrderList(params, ctx) {
   const status = str(params, 'status')
   const keyword = str(params, 'keyword')
 
-  const filtered = db.allOrders().filter(function (o) {
-    if (status.length > 0 && o.status !== status) return false
-    if (keyword.length > 0) {
-      const hit = o.orderNo.indexOf(keyword) >= 0 || o.description.indexOf(keyword) >= 0 ||
-        o.category.indexOf(keyword) >= 0 || o.userName.indexOf(keyword) >= 0 ||
-        (o.building + o.room).indexOf(keyword) >= 0
-      if (!hit) return false
-    }
-    return true
-  })
-
-  const start = (page - 1) * size
-  const list = filtered.slice(start, start + size).map(db.orderToPlain)
-  return ok({
-    list: list,
-    total: filtered.length,
+  const result = await db.listOrders({
+    userId: '',
+    status: status,
+    keyword: keyword,
     page: page,
     size: size,
-    hasMore: start + list.length < filtered.length
+    admin: true
+  })
+  const list = result.rows.map(db.orderToPlain)
+  const start = (page - 1) * size
+  return ok({
+    list: list,
+    total: result.total,
+    page: page,
+    size: size,
+    hasMore: start + list.length < result.total
   })
 }
 
 /** PUT /admin/order/status 推进工单状态（0待处理 -> 1维修中 -> 2已完成） */
-function handleAdminOrderStatus(params, ctx) {
-  const admin = requireAdmin(params, ctx)
+async function handleAdminOrderStatus(params, ctx) {
+  const admin = await requireAdmin(params, ctx)
   if (!admin) return fail('无管理员权限，请使用管理员账号登录')
 
-  const order = db.findOrder(str(params, 'id'))
+  const order = await db.getOrder(str(params, 'id'))
   if (!order) return fail('工单不存在或已被删除')
 
   const status = str(params, 'status')
@@ -480,37 +435,34 @@ function handleAdminOrderStatus(params, ctx) {
   if (status === '1' && order.status !== '0') return fail('该工单已在维修中')
   if (status === '2' && order.status !== '1') return fail('请先将工单置为「维修中」')
 
-  order.status = status
-  order.updateTime = db.nowTime()
-  if (status === '1') {
-    order.logs.push({ time: db.nowTime(), content: '宿管中心已受理，维修师傅已接单（处理人：' + admin.nickname + '）' })
-  } else {
-    order.logs.push({ time: db.nowTime(), content: '维修完成，请同学确认（处理人：' + admin.nickname + '）' })
-  }
-  db.saveOrders()
-  return ok(db.orderToPlain(order))
+  const now = db.nowTime()
+  const log = status === '1'
+    ? { time: now, content: '宿管中心已受理，维修师傅已接单（处理人：' + admin.nickname + '）' }
+    : { time: now, content: '维修完成，请同学确认（处理人：' + admin.nickname + '）' }
+  const updated = await db.updateOrder(order.id, { status: status, updateTime: now }, log)
+  return ok(db.orderToPlain(updated))
 }
 
 /** PUT /admin/order/remark 管理员填写处理备注 */
-function handleAdminOrderRemark(params, ctx) {
-  const admin = requireAdmin(params, ctx)
+async function handleAdminOrderRemark(params, ctx) {
+  const admin = await requireAdmin(params, ctx)
   if (!admin) return fail('无管理员权限，请使用管理员账号登录')
 
-  const order = db.findOrder(str(params, 'id'))
+  const order = await db.getOrder(str(params, 'id'))
   if (!order) return fail('工单不存在或已被删除')
 
   const remark = str(params, 'remark')
   if (remark.length === 0) return fail('请填写处理备注')
-  order.remark = remark
-  order.updateTime = db.nowTime()
-  order.logs.push({ time: db.nowTime(), content: '管理员备注：' + remark + '（' + admin.nickname + '）' })
-  db.saveOrders()
-  return ok(db.orderToPlain(order))
+
+  const now = db.nowTime()
+  const updated = await db.updateOrder(order.id, { remark: remark, updateTime: now },
+    { time: now, content: '管理员备注：' + remark + '（' + admin.nickname + '）' })
+  return ok(db.orderToPlain(updated))
 }
 
 /** POST /admin/notice/create 发布公告 */
-function handleAdminNoticeCreate(params, ctx) {
-  const admin = requireAdmin(params, ctx)
+async function handleAdminNoticeCreate(params, ctx) {
+  const admin = await requireAdmin(params, ctx)
   if (!admin) return fail('无管理员权限，请使用管理员账号登录')
 
   const title = str(params, 'title')
@@ -526,13 +478,13 @@ function handleAdminNoticeCreate(params, ctx) {
     time: db.nowTime(),
     tag: tag.length > 0 ? tag : '通知'
   }
-  db.addNotice(notice)
+  await db.addNotice(notice)
   return ok(db.noticeToPlain(notice))
 }
 
 /** PUT /admin/notice/update 修改公告 */
-function handleAdminNoticeUpdate(params, ctx) {
-  const admin = requireAdmin(params, ctx)
+async function handleAdminNoticeUpdate(params, ctx) {
+  const admin = await requireAdmin(params, ctx)
   if (!admin) return fail('无管理员权限，请使用管理员账号登录')
 
   const id = str(params, 'id')
@@ -541,19 +493,19 @@ function handleAdminNoticeUpdate(params, ctx) {
   if (params.title !== undefined) patch.title = str(params, 'title')
   if (params.content !== undefined) patch.content = str(params, 'content')
   if (params.tag !== undefined) patch.tag = str(params, 'tag')
-  const notice = db.updateNotice(id, patch)
+  const notice = await db.updateNotice(id, patch)
   if (!notice) return fail('公告不存在')
   return ok(db.noticeToPlain(notice))
 }
 
 /** DELETE /admin/notice/delete 删除公告 */
-function handleAdminNoticeDelete(params, ctx) {
-  const admin = requireAdmin(params, ctx)
+async function handleAdminNoticeDelete(params, ctx) {
+  const admin = await requireAdmin(params, ctx)
   if (!admin) return fail('无管理员权限，请使用管理员账号登录')
 
   const id = str(params, 'id')
-  if (!db.findNotice(id)) return fail('公告不存在')
-  db.removeNotice(id)
+  if (!(await db.getNotice(id))) return fail('公告不存在')
+  await db.removeNotice(id)
   return ok({ id: id })
 }
 
@@ -597,9 +549,9 @@ const ROUTES = [
  * @param {string} url     接口路径，如 /repair/list
  * @param {object} params  合并后的参数（query + body）
  * @param {object} ctx     请求上下文：{ token }
- * @returns {{code:number, message:string, data:*}}
+ * @returns {Promise<{code:number, message:string, data:*}>}
  */
-function handle(method, url, params, ctx) {
+async function handle(method, url, params, ctx) {
   const path = String(url || '/').split('?')[0]
   for (let i = 0; i < ROUTES.length; i++) {
     const route = ROUTES[i]
