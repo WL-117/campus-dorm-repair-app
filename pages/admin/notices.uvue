@@ -1,0 +1,372 @@
+<template>
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	<scroll-view class="page-scroll" :scroll-y="true" :bounces="false">
+	<!-- #endif -->
+
+	<view class="page">
+		<!-- 发布公告 -->
+		<view class="card">
+			<view class="card-head">
+				<text class="card-bar"></text>
+				<text class="card-title">发布新公告</text>
+			</view>
+
+			<input class="line-input" v-model="title" placeholder="公告标题，如：宿舍热水供应时间调整" placeholder-class="ph" :maxlength="40" />
+
+			<view class="tag-row">
+				<view class="tag" :class="tag == item ? 'tag-on' : ''" v-for="(item, index) in tags" :key="index" @click="tag = item">
+					<text class="tag-text" :class="tag == item ? 'tag-text-on' : ''">{{item}}</text>
+				</view>
+			</view>
+
+			<textarea class="content-input" v-model="content" placeholder="公告正文，尽量写清时间、地点与注意事项（不少于 5 个字）" placeholder-class="ph" :maxlength="500" />
+			<text class="counter">{{content.length}}/500</text>
+
+			<view class="submit-btn" @click="publish">
+				<text class="submit-btn-text">立即发布</text>
+			</view>
+		</view>
+
+		<!-- 公告列表 -->
+		<view class="section">
+			<view class="card-head">
+				<text class="card-bar"></text>
+				<text class="card-title">已发布公告</text>
+				<text class="card-count">共 {{list.length}} 条</text>
+			</view>
+
+			<view class="notice-card" v-for="item in list" :key="item.id">
+				<view class="notice-head">
+					<text class="notice-tag">{{item.tag}}</text>
+					<text class="notice-time">{{item.time}}</text>
+				</view>
+				<text class="notice-title">{{item.title}}</text>
+				<text class="notice-content">{{item.content}}</text>
+				<view class="notice-actions">
+					<view class="del-btn" @click="remove(item.id, item.title)">
+						<text class="del-btn-text">删除</text>
+					</view>
+				</view>
+			</view>
+
+			<view class="empty" v-if="list.length == 0">
+				<view class="empty-icon">
+					<text class="empty-icon-text">告</text>
+				</view>
+				<text class="empty-title">还没有发布公告</text>
+				<text class="empty-desc">在上方填写内容即可发布给全体同学</text>
+			</view>
+		</view>
+
+		<view class="bottom"></view>
+	</view>
+
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	</scroll-view>
+	<!-- #endif -->
+</template>
+
+<script setup lang="uts">
+	import { apiAdminNoticeCreate, apiAdminNoticeDelete, apiNoticeList } from '../../common/api.uts'
+	import { Notice, ApiResult } from '../../common/types.uts'
+	import { plainToNotice, arrayVal } from '../../common/convert.uts'
+	import { toast, successToast, confirmDialog, showLoading, hideLoading } from '../../common/util.uts'
+	import { isLogin, isAdmin } from '../../common/store.uts'
+
+	const tags = ref<string[]>(['通知', '检修', '服务', '假期', '安全'])
+	const title = ref('')
+	const tag = ref('通知')
+	const content = ref('')
+	const list = ref<Notice[]>([])
+
+	onPageShow(() => {
+		if (!isLogin()) {
+			uni.reLaunch({
+				url: '/pages/login/login'
+			})
+			return
+		}
+		if (!isAdmin()) {
+			toast('仅管理员可进入公告管理')
+			uni.navigateBack()
+			return
+		}
+		loadList()
+	})
+
+	function loadList() : void {
+		apiNoticeList().then((res : ApiResult) => {
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			const d = res.data as UTSJSONObject
+			const arr = arrayVal(d, 'list')
+			const items : Notice[] = []
+			for (let i = 0; i < arr.length; i++) {
+				items.push(plainToNotice(arr[i]))
+			}
+			list.value = items
+		})
+	}
+
+	function publish() : void {
+		if (title.value.length == 0) {
+			toast('请输入公告标题')
+			return
+		}
+		if (content.value.length < 5) {
+			toast('公告内容不少于 5 个字')
+			return
+		}
+		showLoading('发布中')
+		apiAdminNoticeCreate(title.value, content.value, tag.value).then((res : ApiResult) => {
+			hideLoading()
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			successToast('发布成功')
+			title.value = ''
+			content.value = ''
+			tag.value = '通知'
+			loadList()
+		})
+	}
+
+	function remove(id : string, name : string) : void {
+		confirmDialog('删除公告', '确认删除「' + name + '」？').then((yes : boolean) => {
+			if (!yes) return
+			apiAdminNoticeDelete(id).then((res : ApiResult) => {
+				if (res.code != 0) {
+					toast(res.message)
+					return
+				}
+				successToast('已删除')
+				loadList()
+			})
+		})
+	}
+</script>
+
+<style>
+	page {
+		background-color: #f4f6fa;
+	}
+
+	.page {
+		flex-direction: column;
+		background-color: #f4f6fa;
+	}
+
+	.card {
+		margin: 24rpx 24rpx 0 24rpx;
+		padding: 26rpx;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+		flex-direction: column;
+	}
+
+	.card-head {
+		flex-direction: row;
+		align-items: center;
+		margin-bottom: 20rpx;
+	}
+
+	.card-bar {
+		width: 8rpx;
+		height: 28rpx;
+		border-radius: 4rpx;
+		background-color: #2b6cff;
+		margin-right: 12rpx;
+	}
+
+	.card-title {
+		flex: 1;
+		font-size: 30rpx;
+		font-weight: bold;
+		color: #1f2329;
+	}
+
+	.card-count {
+		font-size: 23rpx;
+		color: #9aa0a6;
+	}
+
+	.line-input {
+		height: 80rpx;
+		padding: 0 20rpx;
+		border-radius: 16rpx;
+		background-color: #f7f9fc;
+		font-size: 27rpx;
+		color: #1f2329;
+	}
+
+	.tag-row {
+		margin-top: 18rpx;
+		flex-direction: row;
+		flex-wrap: wrap;
+	}
+
+	.tag {
+		margin-right: 14rpx;
+		margin-bottom: 14rpx;
+		padding: 10rpx 26rpx;
+		border-radius: 30rpx;
+		background-color: #f2f5fb;
+	}
+
+	.tag-on {
+		background-color: #e8f0ff;
+	}
+
+	.tag-text {
+		font-size: 24rpx;
+		color: #6b7280;
+	}
+
+	.tag-text-on {
+		color: #2b6cff;
+		font-weight: bold;
+	}
+
+	.content-input {
+		margin-top: 10rpx;
+		width: 100%;
+		height: 220rpx;
+		padding: 20rpx;
+		border-radius: 16rpx;
+		background-color: #f7f9fc;
+		font-size: 26rpx;
+		color: #1f2329;
+		line-height: 38rpx;
+	}
+
+	.counter {
+		margin-top: 8rpx;
+		text-align: right;
+		font-size: 21rpx;
+		color: #b6bdc9;
+	}
+
+	.submit-btn {
+		margin-top: 22rpx;
+		height: 88rpx;
+		border-radius: 44rpx;
+		background-image: linear-gradient(to right, #2b6cff, #5f92ff);
+		justify-content: center;
+		align-items: center;
+	}
+
+	.submit-btn-text {
+		font-size: 29rpx;
+		font-weight: bold;
+		color: #ffffff;
+	}
+
+	.section {
+		margin: 24rpx 24rpx 0 24rpx;
+	}
+
+	.notice-card {
+		margin-bottom: 20rpx;
+		padding: 24rpx;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+		flex-direction: column;
+	}
+
+	.notice-head {
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.notice-tag {
+		padding: 6rpx 16rpx;
+		border-radius: 10rpx;
+		background-color: #e8f0ff;
+		color: #2b6cff;
+		font-size: 21rpx;
+	}
+
+	.notice-time {
+		font-size: 21rpx;
+		color: #b6bdc9;
+	}
+
+	.notice-title {
+		margin-top: 14rpx;
+		font-size: 28rpx;
+		font-weight: bold;
+		color: #1f2329;
+		line-height: 40rpx;
+	}
+
+	.notice-content {
+		margin-top: 10rpx;
+		font-size: 24rpx;
+		color: #6b7280;
+		line-height: 38rpx;
+	}
+
+	.notice-actions {
+		margin-top: 18rpx;
+		padding-top: 18rpx;
+		border-top-width: 1rpx;
+		border-top-color: #f4f5f8;
+		border-top-style: solid;
+		flex-direction: row;
+		justify-content: flex-end;
+	}
+
+	.del-btn {
+		padding: 10rpx 28rpx;
+		border-radius: 30rpx;
+		background-color: #fff1f0;
+	}
+
+	.del-btn-text {
+		font-size: 23rpx;
+		color: #f5222d;
+	}
+
+	.empty {
+		padding: 70rpx 0;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.empty-icon {
+		width: 110rpx;
+		height: 110rpx;
+		border-radius: 55rpx;
+		background-color: #e8f0ff;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.empty-icon-text {
+		font-size: 44rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.empty-title {
+		margin-top: 22rpx;
+		font-size: 27rpx;
+		color: #4b5563;
+	}
+
+	.empty-desc {
+		margin-top: 8rpx;
+		font-size: 23rpx;
+		color: #b6bdc9;
+	}
+
+	.bottom {
+		height: 40rpx;
+	}
+</style>

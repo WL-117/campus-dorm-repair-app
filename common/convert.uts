@@ -1,0 +1,275 @@
+/**
+ * 数据转换层：
+ * 1. 实体对象 <-> 扁平化 JSON 对象（UTSJSONObject），模拟服务端序列化 / 客户端反序列化
+ * 2. 网络响应（any）安全取值，避免空指针
+ */
+import { UserRecord, UserInfo, RepairOrder, OrderLog, Notice, FaultTip, AdminStat, AdminUserItem } from './types.uts'
+import { splitStr, joinStr } from './util.uts'
+
+/** 从 UTSJSONObject 安全读取字符串 */
+export function strVal(obj : UTSJSONObject, key : string) : string {
+	const v = obj[key]
+	if (v == null) return ''
+	return v as string
+}
+
+/** 从 UTSJSONObject 安全读取数字 */
+export function numVal(obj : UTSJSONObject, key : string) : number {
+	const v = obj[key]
+	if (v == null) return 0
+	return v as number
+}
+
+/** 从 UTSJSONObject 安全读取布尔值 */
+export function boolVal(obj : UTSJSONObject, key : string) : boolean {
+	const v = obj[key]
+	if (v == null) return false
+	return v as boolean
+}
+
+/** 安全获取子对象 */
+export function objVal(obj : UTSJSONObject, key : string) : UTSJSONObject {
+	const v = obj[key]
+	if (v == null) {
+		const empty : UTSJSONObject = {}
+		return empty
+	}
+	return v as UTSJSONObject
+}
+
+/** 安全获取字符串数组（图片地址等） */
+export function strArrayVal(obj : UTSJSONObject, key : string) : string[] {
+	const v = obj[key]
+	if (v == null) {
+		const empty : string[] = []
+		return empty
+	}
+	return v as string[]
+}
+
+/** 安全获取对象数组并转成普通数组 */
+export function arrayVal(obj : UTSJSONObject, key : string) : UTSJSONObject[] {
+	const res : UTSJSONObject[] = []
+	const v = obj[key]
+	if (v == null) return res
+	const arr = v as UTSJSONObject[]
+	for (let i = 0; i < arr.length; i++) {
+		res.push(arr[i] as UTSJSONObject)
+	}
+	return res
+}
+
+/** 用户实体 -> 扁平对象 */
+export function userToPlain(u : UserRecord) : UTSJSONObject {
+	const obj : UTSJSONObject = {
+		'id': u.id,
+		'username': u.username,
+		'password': u.password,
+		'nickname': u.nickname,
+		'phone': u.phone,
+		'avatar': u.avatar,
+		'gender': u.gender,
+		'dorm': u.dorm,
+		'role': u.role,
+		'createTime': u.createTime
+	}
+	return obj
+}
+
+/** 扁平对象 -> 用户实体 */
+export function plainToUser(obj : UTSJSONObject) : UserRecord {
+	const role = strVal(obj, 'role')
+	const u : UserRecord = {
+		id: strVal(obj, 'id'),
+		username: strVal(obj, 'username'),
+		password: strVal(obj, 'password'),
+		nickname: strVal(obj, 'nickname'),
+		phone: strVal(obj, 'phone'),
+		avatar: strVal(obj, 'avatar'),
+		gender: strVal(obj, 'gender'),
+		dorm: strVal(obj, 'dorm'),
+		role: role.length > 0 ? role : 'student',
+		createTime: strVal(obj, 'createTime')
+	}
+	return u
+}
+
+/** 脱敏：去掉密码，只保留对外用户信息 */
+export function publicUser(u : UserRecord) : UTSJSONObject {
+	const obj : UTSJSONObject = {
+		'id': u.id,
+		'username': u.username,
+		'nickname': u.nickname,
+		'phone': u.phone,
+		'avatar': u.avatar,
+		'gender': u.gender,
+		'dorm': u.dorm,
+		'role': u.role,
+		'createTime': u.createTime
+	}
+	return obj
+}
+
+/** 扁平对象 -> 对外用户信息 */
+export function toUserInfo(obj : UTSJSONObject) : UserInfo {
+	const role = strVal(obj, 'role')
+	const u : UserInfo = {
+		id: strVal(obj, 'id'),
+		username: strVal(obj, 'username'),
+		nickname: strVal(obj, 'nickname'),
+		phone: strVal(obj, 'phone'),
+		avatar: strVal(obj, 'avatar'),
+		gender: strVal(obj, 'gender'),
+		dorm: strVal(obj, 'dorm'),
+		role: role.length > 0 ? role : 'student',
+		createTime: strVal(obj, 'createTime')
+	}
+	return u
+}
+
+/** 空的用户信息（未登录 / 缓存不存在时使用，避免空指针） */
+export function emptyUser() : UserInfo {
+	const u : UserInfo = {
+		id: '',
+		username: '',
+		nickname: '',
+		phone: '',
+		avatar: '',
+		gender: '',
+		dorm: '',
+		role: 'student',
+		createTime: ''
+	}
+	return u
+}
+
+/** 工单实体 -> 扁平对象（图片、进度日志拍平成字符串，便于持久化） */
+export function orderToPlain(o : RepairOrder) : UTSJSONObject {
+	const logs : string[] = []
+	for (let i = 0; i < o.logs.length; i++) {
+		logs.push(o.logs[i].time + '::' + o.logs[i].content)
+	}
+	const obj : UTSJSONObject = {
+		'id': o.id,
+		'orderNo': o.orderNo,
+		'userId': o.userId,
+		'userName': o.userName,
+		'category': o.category,
+		'building': o.building,
+		'room': o.room,
+		'contact': o.contact,
+		'description': o.description,
+		'images': joinStr(o.images, ','),
+		'level': o.level,
+		'status': o.status,
+		'createTime': o.createTime,
+		'updateTime': o.updateTime,
+		'remark': o.remark,
+		'logs': joinStr(logs, '|')
+	}
+	return obj
+}
+
+/** 扁平对象 -> 工单实体 */
+export function plainToOrder(obj : UTSJSONObject) : RepairOrder {
+	const images : string[] = splitStr(strVal(obj, 'images'), ',')
+	const logs : OrderLog[] = []
+	const logItems = splitStr(strVal(obj, 'logs'), '|')
+	for (let i = 0; i < logItems.length; i++) {
+		const parts = splitStr(logItems[i], '::')
+		if (parts.length >= 2) {
+			const log : OrderLog = {
+				time: parts[0],
+				content: parts[1]
+			}
+			logs.push(log)
+		}
+	}
+	const o : RepairOrder = {
+		id: strVal(obj, 'id'),
+		orderNo: strVal(obj, 'orderNo'),
+		userId: strVal(obj, 'userId'),
+		userName: strVal(obj, 'userName'),
+		category: strVal(obj, 'category'),
+		building: strVal(obj, 'building'),
+		room: strVal(obj, 'room'),
+		contact: strVal(obj, 'contact'),
+		description: strVal(obj, 'description'),
+		images: images,
+		level: strVal(obj, 'level'),
+		status: strVal(obj, 'status'),
+		createTime: strVal(obj, 'createTime'),
+		updateTime: strVal(obj, 'updateTime'),
+		remark: strVal(obj, 'remark'),
+		logs: logs
+	}
+	return o
+}
+
+/** 公告实体 -> 扁平对象 */
+export function noticeToPlain(n : Notice) : UTSJSONObject {
+	const obj : UTSJSONObject = {
+		'id': n.id,
+		'title': n.title,
+		'content': n.content,
+		'time': n.time,
+		'tag': n.tag
+	}
+	return obj
+}
+
+/** 扁平对象 -> 公告实体 */
+export function plainToNotice(obj : UTSJSONObject) : Notice {
+	const n : Notice = {
+		id: strVal(obj, 'id'),
+		title: strVal(obj, 'title'),
+		content: strVal(obj, 'content'),
+		time: strVal(obj, 'time'),
+		tag: strVal(obj, 'tag')
+	}
+	return n
+}
+
+/** 扁平对象 -> 管理端总览统计 */
+export function toAdminStat(obj : UTSJSONObject) : AdminStat {
+	const s : AdminStat = {
+		users: numVal(obj, 'users'),
+		students: numVal(obj, 'students'),
+		admins: numVal(obj, 'admins'),
+		orders: numVal(obj, 'orders'),
+		pending: numVal(obj, 'pending'),
+		doing: numVal(obj, 'doing'),
+		done: numVal(obj, 'done'),
+		canceled: numVal(obj, 'canceled'),
+		urgent: numVal(obj, 'urgent'),
+		todayOrders: numVal(obj, 'todayOrders'),
+		notices: numVal(obj, 'notices')
+	}
+	return s
+}
+
+/** 扁平对象 -> 管理端用户列表项 */
+export function toAdminUserItem(obj : UTSJSONObject) : AdminUserItem {
+	const u : AdminUserItem = {
+		id: strVal(obj, 'id'),
+		username: strVal(obj, 'username'),
+		nickname: strVal(obj, 'nickname'),
+		phone: strVal(obj, 'phone'),
+		avatar: strVal(obj, 'avatar'),
+		gender: strVal(obj, 'gender'),
+		dorm: strVal(obj, 'dorm'),
+		role: strVal(obj, 'role'),
+		createTime: strVal(obj, 'createTime'),
+		orderCount: numVal(obj, 'orderCount')
+	}
+	return u
+}
+
+/** 扁平对象 -> 常见故障提示 */
+export function plainToTip(obj : UTSJSONObject) : FaultTip {
+	const t : FaultTip = {
+		title: strVal(obj, 'title'),
+		desc: strVal(obj, 'desc')
+	}
+	return t
+}

@@ -1,0 +1,598 @@
+<template>
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	<scroll-view class="page-scroll" :scroll-y="true" :bounces="false">
+	<!-- #endif -->
+
+	<view class="page">
+		<!-- 顶部用户信息 + 工单统计 -->
+		<view class="header">
+			<view class="user-row" @click="goProfile">
+				<view class="avatar">
+					<image class="avatar-img" v-if="avatar.length > 0" :src="avatar" mode="aspectFill"></image>
+					<text class="avatar-text" v-else>{{avatarText}}</text>
+				</view>
+				<view class="user-info">
+					<text class="nickname">{{greeting}}，{{nickname}}</text>
+					<text class="dorm">{{dormText}}</text>
+				</view>
+				<text class="arrow">›</text>
+			</view>
+
+			<view class="stat-card">
+				<view class="stat-item" @click="goMine('')">
+					<text class="stat-num">{{total}}</text>
+					<text class="stat-label">全部工单</text>
+				</view>
+				<view class="stat-line"></view>
+				<view class="stat-item" @click="goMine('0')">
+					<text class="stat-num color-pending">{{pending}}</text>
+					<text class="stat-label">待处理</text>
+				</view>
+				<view class="stat-line"></view>
+				<view class="stat-item" @click="goMine('1')">
+					<text class="stat-num color-doing">{{doing}}</text>
+					<text class="stat-label">维修中</text>
+				</view>
+				<view class="stat-line"></view>
+				<view class="stat-item" @click="goMine('2')">
+					<text class="stat-num color-done">{{done}}</text>
+					<text class="stat-label">已完成</text>
+				</view>
+			</view>
+		</view>
+
+		<!-- 快捷服务 -->
+		<view class="section">
+			<view class="section-head">
+				<text class="section-bar"></text>
+				<text class="section-title">快捷服务</text>
+			</view>
+			<view class="quick-grid">
+				<view class="quick-item" @click="goCreate">
+					<view class="quick-icon icon-1">
+						<text class="quick-icon-text">修</text>
+					</view>
+					<text class="quick-text">我要报修</text>
+				</view>
+				<view class="quick-item" @click="goMine('')">
+					<view class="quick-icon icon-2">
+						<text class="quick-icon-text">单</text>
+					</view>
+					<text class="quick-text">我的报修</text>
+				</view>
+				<view class="quick-item" @click="goHall">
+					<view class="quick-icon icon-3">
+						<text class="quick-icon-text">厅</text>
+					</view>
+					<text class="quick-text">报修大厅</text>
+				</view>
+				<view class="quick-item" @click="goNoticeList">
+					<view class="quick-icon icon-4">
+						<text class="quick-icon-text">告</text>
+					</view>
+					<text class="quick-text">公告中心</text>
+				</view>
+			</view>
+		</view>
+
+		<!-- 报修公告 -->
+		<view class="section">
+			<view class="section-head">
+				<text class="section-title">报修公告</text>
+				<text class="more" @click="goNoticeList">更多 ›</text>
+			</view>
+			<view class="notice-card">
+				<view class="notice-item" v-for="(item, index) in notices" :key="item.id" @click="openNotice(item.id)">
+					<text class="notice-tag">{{item.tag}}</text>
+					<text class="notice-title">{{item.title}}</text>
+					<text class="notice-time">{{item.time}}</text>
+				</view>
+				<view class="empty" v-if="notices.length == 0">
+					<view class="empty-icon">
+						<text class="empty-icon-text">告</text>
+					</view>
+					<text class="empty-title">暂无公告</text>
+				</view>
+			</view>
+		</view>
+
+		<!-- 常见故障提示 -->
+		<view class="section">
+			<view class="section-head">
+				<text class="section-bar"></text>
+				<text class="section-title">常见故障自助处理</text>
+			</view>
+			<view class="tip-card">
+				<view class="tip-item" v-for="(item, index) in tips" :key="index">
+					<text class="tip-title">{{item.title}}</text>
+					<text class="tip-desc">{{item.desc}}</text>
+				</view>
+				<view class="empty" v-if="tips.length == 0">
+					<view class="empty-icon">
+						<text class="empty-icon-text">助</text>
+					</view>
+					<text class="empty-title">暂无自助处理提示</text>
+				</view>
+			</view>
+		</view>
+
+		<view class="bottom"></view>
+	</view>
+
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	</scroll-view>
+	<!-- #endif -->
+</template>
+
+<script setup lang="uts">
+	import { apiStat, apiNoticeList, apiTips, apiCategories } from '../../common/api.uts'
+	import { ApiResult, Notice, FaultTip } from '../../common/types.uts'
+	import { plainToNotice, plainToTip, arrayVal, numVal } from '../../common/convert.uts'
+	import { toast } from '../../common/util.uts'
+	import {
+		getUser, isLogin, getTips, saveTips, getCategories, saveCategories
+	} from '../../common/store.uts'
+
+	const nickname = ref('同学')
+	const dormText = ref('未填写宿舍')
+	const avatar = ref('')
+	const avatarText = ref('同')
+	const greeting = ref('你好')
+
+	const total = ref(0)
+	const pending = ref(0)
+	const doing = ref(0)
+	const done = ref(0)
+
+	const notices = ref<Notice[]>([])
+	const tips = ref<FaultTip[]>([])
+
+	onPageShow(() => {
+		if (!isLogin()) {
+			uni.reLaunch({
+				url: '/pages/login/login'
+			})
+			return
+		}
+		loadUser()
+		loadStat()
+		loadNotices()
+		loadTips()
+		loadCategories()
+	})
+
+	function loadUser() : void {
+		const u = getUser()
+		if (u.id.length > 0) {
+			nickname.value = u.nickname.length > 0 ? u.nickname : u.username
+			dormText.value = u.dorm.length > 0 ? u.dorm : '未填写宿舍'
+			avatar.value = u.avatar
+			avatarText.value = nickname.value.substring(0, 1)
+		}
+		const hour = new Date().getHours()
+		if (hour < 6) greeting.value = '凌晨好'
+		else if (hour < 11) greeting.value = '早上好'
+		else if (hour < 14) greeting.value = '中午好'
+		else if (hour < 18) greeting.value = '下午好'
+		else greeting.value = '晚上好'
+	}
+
+	function loadStat() : void {
+		apiStat().then((res : ApiResult) => {
+			if (res.code != 0) return
+			const d = res.data as UTSJSONObject
+			total.value = numVal(d, 'total')
+			pending.value = numVal(d, 'pending')
+			doing.value = numVal(d, 'doing')
+			done.value = numVal(d, 'done')
+		})
+	}
+
+	function loadNotices() : void {
+		apiNoticeList().then((res : ApiResult) => {
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			const d = res.data as UTSJSONObject
+			const arr = arrayVal(d, 'list')
+			const list : Notice[] = []
+			for (let i = 0; i < arr.length && i < 3; i++) {
+				list.push(plainToNotice(arr[i]))
+			}
+			notices.value = list
+		})
+	}
+
+	function loadTips() : void {
+		// 优先读取本地缓存的常用数据，再向服务端同步
+		const cached = getTips()
+		if (cached.length > 0) {
+			tips.value = cached
+		}
+		apiTips().then((res : ApiResult) => {
+			if (res.code != 0) return
+			const d = res.data as UTSJSONObject
+			const arr = arrayVal(d, 'list')
+			const list : FaultTip[] = []
+			for (let i = 0; i < arr.length; i++) {
+				list.push(plainToTip(arr[i]))
+			}
+			tips.value = list
+			saveTips(list)
+		})
+	}
+
+	function loadCategories() : void {
+		// 故障分类同样属于常用数据，首次拉取后写入本地缓存
+		apiCategories().then((res : ApiResult) => {
+			if (res.code != 0) return
+			const d = res.data as UTSJSONObject
+			const arr = arrayVal(d, 'list')
+			const list : string[] = []
+			for (let i = 0; i < arr.length; i++) {
+				list.push(arr[i]['name'] as string)
+			}
+			if (list.length > 0) saveCategories(list)
+			getCategories()
+		})
+	}
+
+	function goProfile() : void {
+		uni.switchTab({
+			url: '/pages/user/profile'
+		})
+	}
+
+	function goCreate() : void {
+		uni.navigateTo({
+			url: '/pages/repair/create'
+		})
+	}
+
+	function goMine(status : string) : void {
+		uni.navigateTo({
+			url: '/pages/repair/mine?status=' + status
+		})
+	}
+
+	function goHall() : void {
+		uni.switchTab({
+			url: '/pages/repair/list'
+		})
+	}
+
+	function goNoticeList() : void {
+		uni.navigateTo({
+			url: '/pages/notice/list'
+		})
+	}
+
+	function openNotice(id : string) : void {
+		uni.navigateTo({
+			url: '/pages/notice/detail?id=' + id
+		})
+	}
+</script>
+
+<style>
+	page {
+		background-color: #f4f6fa;
+	}
+
+	.page {
+		flex-direction: column;
+		background-color: #f4f6fa;
+	}
+
+	.header {
+		padding: 30rpx 30rpx 90rpx 30rpx;
+		background-color: #2b6cff;
+		flex-direction: column;
+	}
+
+	.user-row {
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.avatar {
+		width: 96rpx;
+		height: 96rpx;
+		border-radius: 48rpx;
+		background-color: #ffffff;
+		justify-content: center;
+		align-items: center;
+		overflow: hidden;
+	}
+
+	.avatar-img {
+		width: 96rpx;
+		height: 96rpx;
+	}
+
+	.avatar-text {
+		font-size: 40rpx;
+		color: #2b6cff;
+		font-weight: bold;
+	}
+
+	.user-info {
+		flex: 1;
+		margin-left: 22rpx;
+		flex-direction: column;
+	}
+
+	.nickname {
+		font-size: 34rpx;
+		color: #ffffff;
+		font-weight: bold;
+	}
+
+	.dorm {
+		margin-top: 8rpx;
+		font-size: 24rpx;
+		color: #d9e4ff;
+	}
+
+	.arrow {
+		font-size: 40rpx;
+		color: #d9e4ff;
+	}
+
+	.stat-card {
+		margin-top: 34rpx;
+		height: 150rpx;
+		border-radius: 18rpx;
+		background-color: #ffffff;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.stat-item {
+		flex: 1;
+		flex-direction: column;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.stat-line {
+		width: 1rpx;
+		height: 60rpx;
+		background-color: #f0f1f4;
+	}
+
+	.stat-num {
+		font-size: 40rpx;
+		color: #1f2329;
+		font-weight: bold;
+	}
+
+	.color-pending {
+		color: #ff8f1f;
+	}
+
+	.color-doing {
+		color: #2b6cff;
+	}
+
+	.color-done {
+		color: #18a058;
+	}
+
+	.stat-label {
+		margin-top: 8rpx;
+		font-size: 23rpx;
+		color: #8a94a6;
+	}
+
+	.section {
+		margin: 24rpx 24rpx 0 24rpx;
+	}
+
+	.section-head {
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.section-title {
+		font-size: 30rpx;
+		color: #1f2329;
+		font-weight: bold;
+		margin-bottom: 18rpx;
+	}
+
+	.more {
+		font-size: 24rpx;
+		color: #8a94a6;
+	}
+
+	.quick-grid {
+		flex-direction: row;
+		background-color: #ffffff;
+		border-radius: 18rpx;
+		padding: 26rpx 0;
+	}
+
+	.quick-item {
+		flex: 1;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.quick-icon {
+		width: 88rpx;
+		height: 88rpx;
+		border-radius: 24rpx;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.icon-1 {
+		background-color: #e8f0ff;
+	}
+
+	.icon-2 {
+		background-color: #fff1e6;
+	}
+
+	.icon-3 {
+		background-color: #e8f7ee;
+	}
+
+	.icon-4 {
+		background-color: #f3e8ff;
+	}
+
+	.quick-icon-text {
+		font-size: 38rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.quick-text {
+		margin-top: 14rpx;
+		font-size: 25rpx;
+		color: #4b5563;
+	}
+
+	.notice-card {
+		background-color: #ffffff;
+		border-radius: 18rpx;
+		padding: 10rpx 26rpx;
+	}
+
+	.notice-item {
+		padding: 22rpx 0;
+		border-bottom-width: 1rpx;
+		border-bottom-color: #f4f5f8;
+		border-bottom-style: solid;
+		flex-direction: column;
+	}
+
+	.notice-tag {
+		align-self: flex-start;
+		padding: 4rpx 14rpx;
+		border-radius: 6rpx;
+		background-color: #e8f0ff;
+		color: #2b6cff;
+		font-size: 20rpx;
+	}
+
+	.notice-title {
+		margin-top: 10rpx;
+		font-size: 27rpx;
+		color: #1f2329;
+	}
+
+	.notice-time {
+		margin-top: 8rpx;
+		font-size: 22rpx;
+		color: #9aa0a6;
+	}
+
+	.tip-card {
+		background-color: #ffffff;
+		border-radius: 18rpx;
+		padding: 6rpx 26rpx 20rpx 26rpx;
+	}
+
+	.tip-item {
+		padding: 18rpx 0;
+		border-bottom-width: 1rpx;
+		border-bottom-color: #f4f5f8;
+		border-bottom-style: solid;
+		flex-direction: column;
+	}
+
+	.tip-title {
+		font-size: 27rpx;
+		color: #1f2329;
+		font-weight: bold;
+	}
+
+	.tip-desc {
+		margin-top: 8rpx;
+		font-size: 24rpx;
+		color: #6b7280;
+		line-height: 36rpx;
+	}
+
+	.empty {
+		padding: 40rpx 0;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.empty-text {
+		font-size: 25rpx;
+		color: #b6bdc9;
+	}
+
+	.bottom {
+		height: 40rpx;
+	}
+
+	/* ---------------- 视觉优化 ---------------- */
+	.header {
+		background-image: linear-gradient(to bottom, #2b6cff, #5f92ff);
+	}
+
+	.stat-card {
+		border-radius: 24rpx;
+		box-shadow: 0 8rpx 24rpx rgba(43, 108, 255, 0.12);
+	}
+
+	.quick-grid {
+		border-radius: 24rpx;
+	}
+
+	.notice-card {
+		border-radius: 24rpx;
+	}
+
+	.tip-card {
+		border-radius: 24rpx;
+	}
+
+	.quick-icon {
+		border-radius: 28rpx;
+	}
+
+	.section-bar {
+		width: 8rpx;
+		height: 28rpx;
+		border-radius: 4rpx;
+		background-color: #2b6cff;
+		margin-right: 12rpx;
+	}
+
+	.empty {
+		padding: 46rpx 0;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.empty-icon {
+		width: 104rpx;
+		height: 104rpx;
+		border-radius: 52rpx;
+		background-color: #eef2f9;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.empty-icon-text {
+		font-size: 40rpx;
+		font-weight: bold;
+		color: #9aa7bd;
+	}
+
+	.empty-title {
+		margin-top: 18rpx;
+		font-size: 25rpx;
+		color: #9aa0a6;
+	}
+</style>

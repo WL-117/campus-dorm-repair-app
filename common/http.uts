@@ -1,0 +1,201 @@
+/**
+ * 网络请求层（Request）
+ * ------------------------------------------------------------------
+ * 双通道设计，页面层（common/api.uts）无需任何改动：
+ *   1. 真实后端：USE_REAL_SERVER = true  -> uni.request 访问 Node 后端（server/server.js）
+ *   2. 模拟后端：USE_REAL_SERVER = false -> 本地 Mock Server 接管（common/mock-server.uts），
+ *      并模拟 200~500ms 网络延迟，保证 loading 等交互完整可演示
+ * 两条通道的接口地址、参数、返回结构（ApiResult { code, message, data }）完全一致
+ */
+import { ApiResult } from './types.uts'
+import { mockHandle } from './mock-server.uts'
+import { getToken } from './store.uts'
+import { strVal, numVal } from './convert.uts'
+
+/** 数据源开关：true = 连接真实后端；false = 使用本地模拟后端（不启动服务也能完整演示） */
+export const USE_REAL_SERVER : boolean = true
+
+/**
+ * 真实后端候选地址（按顺序自动探测，首次连通后记住该地址，后续直接复用）
+ * 这样无论运行在模拟器、真机还是 H5，都无需手动修改 IP
+ * 若只想固定某一个地址，把其它行删掉即可
+ */
+export const REAL_BASE_URLS : string[] = [
+	'http://127.0.0.1:3000/api',     // H5 端 / 电脑本机浏览器（模拟器与真机上会立刻失败，不影响后续探测）
+	'http://10.0.2.2:3000/api',      // Android 模拟器（访问电脑本机）
+	'http://192.168.6.1:3000/api',   // 真机运行：电脑局域网 IP 候选 1
+	'http://10.128.228.36:3000/api', // 真机运行：电脑局域网 IP 候选 2
+	'http://172.16.18.1:3000/api'    // 真机运行：电脑局域网 IP 候选 3
+]
+
+/** 默认后端地址（日志打印与失败提示文案使用） */
+export const REAL_BASE_URL : string = REAL_BASE_URLS[0]
+
+/** 模拟后端地址（仅用于日志展示，不产生真实网络请求） */
+export const MOCK_BASE_URL : string = 'https://mock.dorm-repair.edu.cn/api'
+
+/** 当前生效的服务地址 */
+export const BASE_URL : string = USE_REAL_SERVER ? REAL_BASE_URL : MOCK_BASE_URL
+
+/** 单个候选地址的请求超时（毫秒） */
+const TIMEOUT : number = 6000
+
+/** 探测到的可用后端地址，避免每次请求都从头重试 */
+let activeBaseUrl : string = ''
+
+/* --------------------------------- 结果转换 --------------------------------- */
+
+/** 把服务端返回的 JSON 对象转换成统一的 ApiResult */
+function toApiResult(body : UTSJSONObject | null) : ApiResult {
+	if (body == null) {
+		const empty : ApiResult = {
+			code: 1,
+			message: '服务端返回数据为空',
+			data: ''
+		}
+		return empty
+	}
+	const result : ApiResult = {
+		code: numVal(body, 'code'),
+		message: strVal(body, 'message'),
+		data: body['data']
+	}
+	return result
+}
+
+/** 网络异常兜底：与业务失败保持同一结构，页面 .then() 中可直接 toast 提示 */
+function netFail() : ApiResult {
+	const r : ApiResult = {
+		code: 1,
+		message: '连接后端失败，请确认 server 已启动（node server.js）且与电脑在同一网络',
+		data: ''
+	}
+	return r
+}
+
+/* -------------------------------- 真实后端请求 ------------------------------- */
+
+/** 按 HTTP 方法发起请求（method 为字符串变量，这里用字面量分支保证与后端路由匹配） */
+function sendByMethod(method : string, requestUrl : string, data : UTSJSONObject, header : UTSJSONObject, onSuccess : (res : any) => void, onFail : (err : any) => void) : void {
+	if (method == 'POST') {
+		uni.request<UTSJSONObject>({
+			url: requestUrl,
+			method: 'POST',
+			data: data,
+			header: header,
+			timeout: TIMEOUT,
+			dataType: 'json',
+			success: onSuccess,
+			fail: onFail
+		})
+		return
+	}
+	if (method == 'PUT') {
+		uni.request<UTSJSONObject>({
+			url: requestUrl,
+			method: 'PUT',
+			data: data,
+			header: header,
+			timeout: TIMEOUT,
+			dataType: 'json',
+			success: onSuccess,
+			fail: onFail
+		})
+		return
+	}
+	if (method == 'DELETE') {
+		uni.request<UTSJSONObject>({
+			url: requestUrl,
+			method: 'DELETE',
+			data: data,
+			header: header,
+			timeout: TIMEOUT,
+			dataType: 'json',
+			success: onSuccess,
+			fail: onFail
+		})
+		return
+	}
+	uni.request<UTSJSONObject>({
+		url: requestUrl,
+		method: 'GET',
+		data: data,
+		header: header,
+		timeout: TIMEOUT,
+		dataType: 'json',
+		success: onSuccess,
+		fail: onFail
+	})
+}
+
+/** 依次尝试候选地址，直到连通为止 */
+function tryRequest(index : number, hosts : string[], method : string, url : string, data : UTSJSONObject, token : string, resolve : (r : ApiResult) => void) : void {
+	if (index >= hosts.length) {
+		activeBaseUrl = ''
+		resolve(netFail())
+		return
+	}
+	const base = hosts[index]
+	const header : UTSJSONObject = { 'content-type': 'application/json' }
+	if (token.length > 0) header['token'] = token
+
+	const requestUrl = base + url
+	console.log('[HTTP] ' + method + ' ' + requestUrl + '  params = ' + JSON.stringify(data))
+
+	const onSuccess = (res : any) => {
+		activeBaseUrl = base
+		if (index > 0) console.log('[HTTP] 已连通后端：' + base)
+		resolve(toApiResult(res.data as UTSJSONObject))
+	}
+	const onFail = (err : any) => {
+		console.log('[HTTP] 未连通 ' + base + '，尝试下一个地址')
+		tryRequest(index + 1, hosts, method, url, data, token, resolve)
+	}
+
+	sendByMethod(method, requestUrl, data, header, onSuccess, onFail)
+}
+
+function realRequest(method : string, url : string, data : UTSJSONObject, token : string) : Promise<ApiResult> {
+	return new Promise<ApiResult>((resolve, reject) => {
+		// 已探测成功的地址优先，其余按配置顺序排队
+		const hosts : string[] = []
+		if (activeBaseUrl.length > 0) hosts.push(activeBaseUrl)
+		for (let i = 0; i < REAL_BASE_URLS.length; i++) {
+			const candidate = REAL_BASE_URLS[i]
+			let exists = false
+			for (let j = 0; j < hosts.length; j++) {
+				if (hosts[j] == candidate) {
+					exists = true
+					break
+				}
+			}
+			if (!exists) hosts.push(candidate)
+		}
+		tryRequest(0, hosts, method, url, data, token, resolve)
+	})
+}
+
+/* ---------------------------------- 统一入口 ---------------------------------- */
+
+export function request(method : string, url : string, params : UTSJSONObject | null) : Promise<ApiResult> {
+	let data : UTSJSONObject = {}
+	if (params != null) data = params
+
+	// 请求头携带登录凭证（真实后端放 header，模拟后端放参数，二者都支持）
+	const token = getToken()
+	if (token.length > 0) data['token'] = token
+
+	console.log('[RESTful] ' + method + ' ' + BASE_URL + url + '  params = ' + JSON.stringify(data))
+
+	if (USE_REAL_SERVER) {
+		return realRequest(method, url, data, token)
+	}
+
+	// 模拟后端：本地 Mock Server 接管，模拟 200~500ms 网络延迟
+	return new Promise<ApiResult>((resolve, reject) => {
+		const delay = 200 + Math.floor(Math.random() * 300)
+		setTimeout(() => {
+			resolve(mockHandle(method, url, data))
+		}, delay)
+	})
+}

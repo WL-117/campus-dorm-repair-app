@@ -1,0 +1,134 @@
+{
+	"pages": [ //pages数组中第一项表示应用启动页，参考：https://doc.dcloud.net.cn/uni-app-x/collocation/pagesjson.html
+		{
+			"path": "pages/login/login",
+			"style": {
+				"navigationBarTitleText": "登录",
+				"navigationBarBackgroundColor": "#2b6cff",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/register/register",
+			"style": {
+				"navigationBarTitleText": "注册账号",
+				"navigationBarBackgroundColor": "#2b6cff",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationBarTitleText": "校园宿舍报修",
+				"navigationBarBackgroundColor": "#2b6cff",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/repair/create",
+			"style": {
+				"navigationBarTitleText": "提交报修"
+			}
+		},
+		{
+			"path": "pages/repair/list",
+			"style": {
+				"navigationBarTitleText": "报修大厅",
+				"enablePullDownRefresh": true,
+				"onReachBottomDistance": 60
+			}
+		},
+		{
+			"path": "pages/repair/detail",
+			"style": {
+				"navigationBarTitleText": "工单详情"
+			}
+		},
+		{
+			"path": "pages/repair/mine",
+			"style": {
+				"navigationBarTitleText": "我的报修",
+				"enablePullDownRefresh": true,
+				"onReachBottomDistance": 60
+			}
+		},
+		{
+			"path": "pages/user/profile",
+			"style": {
+				"navigationBarTitleText": "个人中心"
+			}
+		},
+		{
+			"path": "pages/notice/list",
+			"style": {
+				"navigationBarTitleText": "报修公告",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/notice/detail",
+			"style": {
+				"navigationBarTitleText": "公告详情"
+			}
+		},
+		{
+			"path": "pages/admin/index",
+			"style": {
+				"navigationBarTitleText": "管理控制台",
+				"navigationBarBackgroundColor": "#2b6cff",
+				"navigationBarTextStyle": "white",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/admin/orders",
+			"style": {
+				"navigationBarTitleText": "工单管理",
+				"enablePullDownRefresh": true,
+				"onReachBottomDistance": 60
+			}
+		},
+		{
+			"path": "pages/admin/users",
+			"style": {
+				"navigationBarTitleText": "用户管理",
+				"enablePullDownRefresh": true,
+				"onReachBottomDistance": 60
+			}
+		},
+		{
+			"path": "pages/admin/notices",
+			"style": {
+				"navigationBarTitleText": "公告管理"
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationBarTextStyle": "white",
+		"navigationBarTitleText": "校园宿舍报修",
+		"navigationBarBackgroundColor": "#2b6cff",
+		"backgroundColor": "#f4f6fa",
+		"backgroundTextStyle": "dark"
+	},
+	"tabBar": {
+		"color": "#8a94a6",
+		"selectedColor": "#2b6cff",
+		"backgroundColor": "#ffffff",
+		"borderStyle": "black",
+		"list": [
+			{
+				"pagePath": "pages/index/index",
+				"text": "首页"
+			},
+			{
+				"pagePath": "pages/repair/list",
+				"text": "报修大厅"
+			},
+			{
+				"pagePath": "pages/user/profile",
+				"text": "我的"
+			}
+		]
+	},
+	"uniIdRouter": {}
+}

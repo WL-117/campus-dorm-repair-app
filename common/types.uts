@@ -1,0 +1,185 @@
+/**
+ * 校园宿舍线上报修 APP —— 全局数据类型与常量定义
+ * 本文件只负责「数据结构 + 常量 + 简单文案映射」，供页面层与接口层共同复用
+ */
+
+/** 用户表记录（模拟数据库，含密码，不直接对外返回） */
+export type UserRecord = {
+	id : string,
+	username : string,
+	password : string,
+	nickname : string,
+	phone : string,
+	avatar : string,
+	gender : string,
+	dorm : string,
+	role : string,
+	createTime : string
+}
+
+/** 对外返回的用户信息（不含密码） */
+export type UserInfo = {
+	id : string,
+	username : string,
+	nickname : string,
+	phone : string,
+	avatar : string,
+	gender : string,
+	dorm : string,
+	role : string,
+	createTime : string
+}
+
+/** 通用筛选 Tab（value 为接口参数值，name 为展示文案） */
+export type TabItem = {
+	value : string,
+	name : string
+}
+
+/** 用户角色常量 */
+export const ROLE_STUDENT : string = 'student'
+export const ROLE_ADMIN : string = 'admin'
+
+/** 角色文案 */
+export function roleText(role : string) : string {
+	if (role == ROLE_ADMIN) return '管理员'
+	return '学生'
+}
+
+/** 工单进度日志 */
+export type OrderLog = {
+	time : string,
+	content : string
+}
+
+/** 报修工单 */
+export type RepairOrder = {
+	id : string,
+	orderNo : string,
+	userId : string,
+	userName : string,
+	category : string,
+	building : string,
+	room : string,
+	contact : string,
+	description : string,
+	images : string[],
+	level : string,
+	status : string,
+	createTime : string,
+	updateTime : string,
+	remark : string,
+	logs : OrderLog[]
+}
+
+/** 报修公告 */
+export type Notice = {
+	id : string,
+	title : string,
+	content : string,
+	time : string,
+	tag : string
+}
+
+/** 常见故障提示 */
+export type FaultTip = {
+	title : string,
+	desc : string
+}
+
+/** 模拟接口统一返回结构：code=0 表示业务成功 */
+export type ApiResult = {
+	code : number,
+	message : string,
+	data : any
+}
+
+/** 分页查询结构 */
+export type PageResult = {
+	list : RepairOrder[],
+	total : number,
+	page : number,
+	size : number,
+	hasMore : boolean
+}
+
+/** 统计结构 */
+export type StatResult = {
+	total : number,
+	pending : number,
+	doing : number,
+	done : number,
+	canceled : number
+}
+
+/** 管理端总览统计 */
+export type AdminStat = {
+	users : number,
+	students : number,
+	admins : number,
+	orders : number,
+	pending : number,
+	doing : number,
+	done : number,
+	canceled : number,
+	urgent : number,
+	todayOrders : number,
+	notices : number
+}
+
+/** 管理端用户列表项（用户信息 + 工单数量） */
+export type AdminUserItem = {
+	id : string,
+	username : string,
+	nickname : string,
+	phone : string,
+	avatar : string,
+	gender : string,
+	dorm : string,
+	role : string,
+	createTime : string,
+	orderCount : number
+}
+
+/** 工单状态常量 */
+export const STATUS_PENDING : string = '0'
+export const STATUS_DOING : string = '1'
+export const STATUS_DONE : string = '2'
+export const STATUS_CANCELED : string = '3'
+
+/** 列表筛选 Tab：空字符串代表「全部」 */
+export const STATUS_TABS : string[] = ['', '0', '1', '2', '3']
+export const STATUS_TAB_NAMES : string[] = ['全部', '待处理', '维修中', '已完成', '已取消']
+
+/** 默认故障分类（常用数据，首次从接口获取后写入本地缓存） */
+export const DEFAULT_CATEGORIES : string[] = ['水电维修', '门窗家具', '网络宽带', '空调电器', '公共设施', '其他问题']
+
+/** 紧急程度 */
+export const LEVELS : string[] = ['普通', '紧急']
+
+/** 状态文案 */
+export function statusText(status : string) : string {
+	if (status == '0') return '待处理'
+	if (status == '1') return '维修中'
+	if (status == '2') return '已完成'
+	if (status == '3') return '已取消'
+	return '未知状态'
+}
+
+/** 状态主题色 */
+export function statusColor(status : string) : string {
+	if (status == '0') return '#ff8f1f'
+	if (status == '1') return '#2b6cff'
+	if (status == '2') return '#18a058'
+	if (status == '3') return '#9aa0a6'
+	return '#9aa0a6'
+}
+
+/** 状态浅色背景（用于标签底色） */
+export function statusBg(status : string) : string {
+	if (status == '0') return '#fff3e5'
+	if (status == '1') return '#e8f0ff'
+	if (status == '2') return '#e8f7ee'
+	if (status == '3') return '#f0f1f3'
+	return '#f0f1f3'
+}

@@ -1,0 +1,168 @@
+<template>
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	<scroll-view class="page-scroll" :scroll-y="true" :bounces="false">
+	<!-- #endif -->
+
+	<view class="page">
+		<view class="list">
+			<view class="notice-card" v-for="(item, index) in notices" :key="item.id" @click="openDetail(item.id)">
+				<view class="notice-top">
+					<text class="notice-tag">{{item.tag}}</text>
+					<text class="notice-time">{{item.time}}</text>
+				</view>
+				<text class="notice-title">{{item.title}}</text>
+				<text class="notice-content">{{item.content}}</text>
+				<view class="notice-bottom">
+					<text class="notice-link">查看详情 ›</text>
+				</view>
+			</view>
+		</view>
+
+		<view class="empty" v-if="notices.length == 0">
+			<text class="empty-text">暂无公告</text>
+		</view>
+	</view>
+
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	</scroll-view>
+	<!-- #endif -->
+</template>
+
+<script setup lang="uts">
+	import { apiNoticeList } from '../../common/api.uts'
+	import { ApiResult, Notice } from '../../common/types.uts'
+	import { plainToNotice, arrayVal } from '../../common/convert.uts'
+	import { toast, showLoading, hideLoading } from '../../common/util.uts'
+
+	const notices = ref<Notice[]>([])
+
+	onLoad((options : OnLoadOptions) => {
+		loadData()
+	})
+
+	onPullDownRefresh(() => {
+		loadData()
+	})
+
+	function loadData() : void {
+		showLoading('加载中')
+		apiNoticeList().then((res : ApiResult) => {
+			hideLoading()
+			uni.stopPullDownRefresh()
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			const d = res.data as UTSJSONObject
+			const arr = arrayVal(d, 'list')
+			const list : Notice[] = []
+			for (let i = 0; i < arr.length; i++) {
+				list.push(plainToNotice(arr[i]))
+			}
+			notices.value = list
+		})
+	}
+
+	function openDetail(id : string) : void {
+		uni.navigateTo({
+			url: '/pages/notice/detail?id=' + id
+		})
+	}
+</script>
+
+<style>
+	page {
+		background-color: #f4f6fa;
+	}
+
+	.page {
+		flex-direction: column;
+		background-color: #f4f6fa;
+		padding-bottom: 30rpx;
+	}
+
+	.list {
+		padding: 24rpx 24rpx 0 24rpx;
+	}
+
+	.notice-card {
+		margin-bottom: 20rpx;
+		padding: 26rpx;
+		border-radius: 18rpx;
+		background-color: #ffffff;
+		flex-direction: column;
+	}
+
+	.notice-top {
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.notice-tag {
+		padding: 4rpx 14rpx;
+		border-radius: 6rpx;
+		background-color: #e8f0ff;
+		color: #2b6cff;
+		font-size: 20rpx;
+	}
+
+	.notice-time {
+		font-size: 22rpx;
+		color: #9aa0a6;
+	}
+
+	.notice-title {
+		margin-top: 16rpx;
+		font-size: 30rpx;
+		color: #1f2329;
+		font-weight: bold;
+		line-height: 44rpx;
+	}
+
+	.notice-content {
+		margin-top: 12rpx;
+		font-size: 25rpx;
+		color: #6b7280;
+		line-height: 40rpx;
+	}
+
+	.notice-bottom {
+		margin-top: 18rpx;
+		flex-direction: row;
+		justify-content: flex-end;
+	}
+
+	.notice-link {
+		font-size: 23rpx;
+		color: #2b6cff;
+	}
+
+	.empty {
+		margin-top: 160rpx;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.empty-text {
+		font-size: 26rpx;
+		color: #9aa0a6;
+	}
+	/* ---------------- 视觉优化 ---------------- */
+	.notice-card {
+		border-radius: 24rpx;
+		box-shadow: 0 6rpx 20rpx rgba(31, 35, 41, 0.05);
+	}
+
+	.notice-tag {
+		padding: 6rpx 18rpx;
+		border-radius: 10rpx;
+	}
+
+	.empty {
+		margin: 60rpx 24rpx;
+		padding: 70rpx 0;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+	}
+</style>

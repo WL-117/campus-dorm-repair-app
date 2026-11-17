@@ -1,0 +1,588 @@
+<template>
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	<scroll-view class="page-scroll" :scroll-y="true" :bounces="false">
+	<!-- #endif -->
+
+	<view class="page">
+		<!-- 个人工单概览 -->
+		<view class="header">
+			<view class="header-row">
+				<view class="avatar">
+					<image class="avatar-img" v-if="avatar.length > 0" :src="avatar" mode="aspectFill"></image>
+					<text class="avatar-text" v-else>{{avatarText}}</text>
+				</view>
+				<view class="user-info">
+					<text class="nickname">{{nickname}}</text>
+					<text class="dorm">{{dormText}}</text>
+				</view>
+			</view>
+			<view class="stat-row">
+				<view class="stat-item">
+					<text class="stat-num">{{total}}</text>
+					<text class="stat-label">全部</text>
+				</view>
+				<view class="stat-item">
+					<text class="stat-num color-pending">{{pending}}</text>
+					<text class="stat-label">待处理</text>
+				</view>
+				<view class="stat-item">
+					<text class="stat-num color-doing">{{doing}}</text>
+					<text class="stat-label">维修中</text>
+				</view>
+				<view class="stat-item">
+					<text class="stat-num color-done">{{done}}</text>
+					<text class="stat-label">已完成</text>
+				</view>
+				<view class="stat-item">
+					<text class="stat-num color-cancel">{{canceled}}</text>
+					<text class="stat-label">已取消</text>
+				</view>
+			</view>
+		</view>
+
+		<!-- 状态筛选 -->
+		<view class="tabs">
+			<view class="tab" :class="tabIndex == index ? 'tab-on' : ''" v-for="(item, index) in tabs" :key="index" @click="switchTab(index)">
+				<text class="tab-text" :class="tabIndex == index ? 'tab-text-on' : ''">{{item}}</text>
+			</view>
+		</view>
+
+		<!-- 我的工单 -->
+		<view class="list">
+			<view class="order-card" v-for="(item, index) in list" :key="item.id" @click="goDetail(item.id)">
+				<view class="order-top">
+					<text class="order-no">{{item.orderNo}}</text>
+					<view :class="statusClass(item.status)">
+						<text :class="statusTextClass(item.status)">{{statusText(item.status)}}</text>
+					</view>
+				</view>
+				<text class="order-title">{{item.category}} · {{item.building}}-{{item.room}}</text>
+				<text class="order-desc">{{item.description}}</text>
+				<view class="order-bottom">
+					<text class="order-time">{{item.createTime}}</text>
+					<text class="order-link">查看详情 ›</text>
+				</view>
+			</view>
+		</view>
+
+		<view class="loading-more" v-if="list.length > 0">
+			<text class="loading-text" v-if="hasMore">上拉加载更多</text>
+			<text class="loading-text" v-else>没有更多工单了</text>
+		</view>
+		<view class="empty" v-if="list.length == 0 && !loading">
+			<view class="empty-icon">
+				<text class="empty-icon-text">单</text>
+			</view>
+			<text class="empty-text">你还没有相关报修记录</text>
+			<view class="empty-btn" @click="goCreate">
+				<text class="empty-btn-text">立即报修</text>
+			</view>
+		</view>
+	</view>
+
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	</scroll-view>
+	<!-- #endif -->
+</template>
+
+<script setup lang="uts">
+	import { apiOrderList, apiStat } from '../../common/api.uts'
+	import {
+		ApiResult, RepairOrder, STATUS_TABS, STATUS_TAB_NAMES, statusText
+	} from '../../common/types.uts'
+	import { plainToOrder, arrayVal, numVal, boolVal } from '../../common/convert.uts'
+	import { toast, showLoading, hideLoading } from '../../common/util.uts'
+	import { getUser, isLogin, takeRefresh } from '../../common/store.uts'
+
+	const PAGE_SIZE = 6
+	const tabs : string[] = STATUS_TAB_NAMES
+
+	const list = ref<RepairOrder[]>([])
+	const tabIndex = ref(0)
+	const pageNo = ref(1)
+	const hasMore = ref(true)
+	const loading = ref(false)
+
+	const total = ref(0)
+	const pending = ref(0)
+	const doing = ref(0)
+	const done = ref(0)
+	const canceled = ref(0)
+
+	const nickname = ref('我')
+	const avatarText = ref('我')
+	const avatar = ref('')
+	const dormText = ref('')
+
+	onLoad((options : OnLoadOptions) => {
+		if (!isLogin()) {
+			uni.reLaunch({
+				url: '/pages/login/login'
+			})
+			return
+		}
+		// 页面间参数传递：首页点击统计卡片时携带 status
+		const status = (options['status'] ?? '') as string
+		for (let i = 0; i < STATUS_TABS.length; i++) {
+			if (STATUS_TABS[i] == status) tabIndex.value = i
+		}
+		loadUser()
+		loadStat()
+		loadData(true)
+	})
+
+	onPageShow(() => {
+		if (takeRefresh()) {
+			loadStat()
+			loadData(true)
+		}
+	})
+
+	onPullDownRefresh(() => {
+		loadStat()
+		loadData(true)
+	})
+
+	onReachBottom(() => {
+		if (!hasMore.value) return
+		loadData(false)
+	})
+
+	function loadUser() : void {
+		const u = getUser()
+		nickname.value = u.nickname.length > 0 ? u.nickname : u.username
+		avatar.value = u.avatar
+		dormText.value = u.dorm.length > 0 ? u.dorm : '未填写宿舍'
+		avatarText.value = nickname.value.substring(0, 1)
+	}
+
+	function loadStat() : void {
+		apiStat().then((res : ApiResult) => {
+			if (res.code != 0) return
+			const d = res.data as UTSJSONObject
+			total.value = numVal(d, 'total')
+			pending.value = numVal(d, 'pending')
+			doing.value = numVal(d, 'doing')
+			done.value = numVal(d, 'done')
+			canceled.value = numVal(d, 'canceled')
+		})
+	}
+
+	function loadData(reset : boolean) : void {
+		if (loading.value) return
+		if (reset) {
+			pageNo.value = 1
+			hasMore.value = true
+		}
+		loading.value = true
+		if (reset) showLoading('加载中')
+
+		apiOrderList(pageNo.value, PAGE_SIZE, STATUS_TABS[tabIndex.value], 'mine', '').then((res : ApiResult) => {
+			loading.value = false
+			hideLoading()
+			uni.stopPullDownRefresh()
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			const d = res.data as UTSJSONObject
+			const arr = arrayVal(d, 'list')
+			const pageList : RepairOrder[] = []
+			for (let i = 0; i < arr.length; i++) {
+				pageList.push(plainToOrder(arr[i]))
+			}
+			if (reset) {
+				list.value = pageList
+			} else {
+				const cur = list.value
+				for (let i = 0; i < pageList.length; i++) {
+					cur.push(pageList[i])
+				}
+				list.value = cur
+			}
+			hasMore.value = boolVal(d, 'hasMore')
+			if (hasMore.value) pageNo.value = pageNo.value + 1
+		})
+	}
+
+	function switchTab(index : number) : void {
+		if (tabIndex.value == index) return
+		tabIndex.value = index
+		loadData(true)
+	}
+
+	function statusClass(status : string) : string {
+		if (status == '0') return 'status status-0'
+		if (status == '1') return 'status status-1'
+		if (status == '2') return 'status status-2'
+		return 'status status-3'
+	}
+
+	function statusTextClass(status : string) : string {
+		if (status == '0') return 'status-text text-0'
+		if (status == '1') return 'status-text text-1'
+		if (status == '2') return 'status-text text-2'
+		return 'status-text text-3'
+	}
+
+	function goDetail(id : string) : void {
+		uni.navigateTo({
+			url: '/pages/repair/detail?id=' + id
+		})
+	}
+
+	function goCreate() : void {
+		uni.navigateTo({
+			url: '/pages/repair/create'
+		})
+	}
+</script>
+
+<style>
+	page {
+		background-color: #f4f6fa;
+	}
+
+	.page {
+		flex-direction: column;
+		background-color: #f4f6fa;
+		padding-bottom: 30rpx;
+	}
+
+	.header {
+		padding: 30rpx 30rpx 24rpx 30rpx;
+		background-color: #2b6cff;
+		flex-direction: column;
+	}
+
+	.header-row {
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.avatar {
+		width: 88rpx;
+		height: 88rpx;
+		border-radius: 44rpx;
+		background-color: #ffffff;
+		justify-content: center;
+		align-items: center;
+		overflow: hidden;
+	}
+
+	.avatar-img {
+		width: 88rpx;
+		height: 88rpx;
+	}
+
+	.avatar-text {
+		font-size: 36rpx;
+		color: #2b6cff;
+		font-weight: bold;
+	}
+
+	.user-info {
+		margin-left: 20rpx;
+		flex-direction: column;
+	}
+
+	.nickname {
+		font-size: 32rpx;
+		color: #ffffff;
+		font-weight: bold;
+	}
+
+	.dorm {
+		margin-top: 6rpx;
+		font-size: 23rpx;
+		color: #d9e4ff;
+	}
+
+	.stat-row {
+		margin-top: 26rpx;
+		flex-direction: row;
+	}
+
+	.stat-item {
+		flex: 1;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.stat-num {
+		font-size: 34rpx;
+		color: #ffffff;
+		font-weight: bold;
+	}
+
+	.color-pending {
+		color: #ffd39b;
+	}
+
+	.color-doing {
+		color: #c7daff;
+	}
+
+	.color-done {
+		color: #b7ebc8;
+	}
+
+	.color-cancel {
+		color: #e5e8ee;
+	}
+
+	.stat-label {
+		margin-top: 6rpx;
+		font-size: 22rpx;
+		color: #d9e4ff;
+	}
+
+	.tabs {
+		margin: 20rpx 24rpx 0 24rpx;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.tab {
+		flex: 1;
+		height: 68rpx;
+		margin-right: 12rpx;
+		border-radius: 34rpx;
+		background-color: #ffffff;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.tab-on {
+		background-color: #2b6cff;
+	}
+
+	.tab-text {
+		font-size: 25rpx;
+		color: #6b7280;
+	}
+
+	.tab-text-on {
+		color: #ffffff;
+		font-weight: bold;
+	}
+
+	.list {
+		margin-top: 20rpx;
+		padding: 0 24rpx;
+	}
+
+	.order-card {
+		margin-bottom: 20rpx;
+		padding: 26rpx;
+		border-radius: 18rpx;
+		background-color: #ffffff;
+		flex-direction: column;
+	}
+
+	.order-top {
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.order-no {
+		font-size: 24rpx;
+		color: #8a94a6;
+	}
+
+	.status {
+		padding: 6rpx 18rpx;
+		border-radius: 20rpx;
+	}
+
+	.status-0 {
+		background-color: #fff3e5;
+	}
+
+	.status-1 {
+		background-color: #e8f0ff;
+	}
+
+	.status-2 {
+		background-color: #e8f7ee;
+	}
+
+	.status-3 {
+		background-color: #f0f1f3;
+	}
+
+	.status-text {
+		font-size: 22rpx;
+		font-weight: bold;
+	}
+
+	.text-0 {
+		color: #ff8f1f;
+	}
+
+	.text-1 {
+		color: #2b6cff;
+	}
+
+	.text-2 {
+		color: #18a058;
+	}
+
+	.text-3 {
+		color: #9aa0a6;
+	}
+
+	.order-title {
+		margin-top: 16rpx;
+		font-size: 30rpx;
+		color: #1f2329;
+		font-weight: bold;
+	}
+
+	.order-desc {
+		margin-top: 12rpx;
+		font-size: 25rpx;
+		color: #6b7280;
+		line-height: 38rpx;
+	}
+
+	.order-bottom {
+		margin-top: 18rpx;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.order-time {
+		font-size: 23rpx;
+		color: #8a94a6;
+	}
+
+	.order-link {
+		font-size: 23rpx;
+		color: #2b6cff;
+	}
+
+	.loading-more {
+		padding: 30rpx 0;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.loading-text {
+		font-size: 24rpx;
+		color: #9aa0a6;
+	}
+
+	.empty {
+		margin-top: 100rpx;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.empty-icon {
+		width: 120rpx;
+		height: 120rpx;
+		border-radius: 60rpx;
+		background-color: #eef1f6;
+		color: #b6bdc9;
+		font-size: 50rpx;
+		text-align: center;
+		line-height: 120rpx;
+	}
+
+	.empty-text {
+		margin-top: 24rpx;
+		font-size: 26rpx;
+		color: #9aa0a6;
+	}
+
+	.empty-btn {
+		margin-top: 30rpx;
+		padding: 14rpx 60rpx;
+		border-radius: 34rpx;
+		background-color: #2b6cff;
+	}
+
+	.empty-btn-text {
+		font-size: 27rpx;
+		color: #ffffff;
+	}
+
+	/* ---------------- 视觉优化 ---------------- */
+	.header {
+		background-image: linear-gradient(to bottom, #2b6cff, #5f92ff);
+	}
+
+	.stat-row {
+		margin: 26rpx 24rpx 0 24rpx;
+		padding: 24rpx 0;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+	}
+
+	.tabs {
+		padding: 0 12rpx;
+		background-color: #ffffff;
+		border-bottom-width: 1rpx;
+		border-bottom-color: #f0f1f4;
+		border-bottom-style: solid;
+	}
+
+	.tab {
+		height: 88rpx;
+		flex-direction: column;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.tab-text {
+		font-size: 26rpx;
+		color: #6b7280;
+	}
+
+	.tab-text-on {
+		font-size: 27rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.order-card {
+		border-radius: 24rpx;
+		box-shadow: 0 6rpx 20rpx rgba(31, 35, 41, 0.05);
+	}
+
+	.empty {
+		margin: 40rpx 24rpx;
+		padding: 70rpx 0;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+	}
+
+	.empty-icon {
+		width: 110rpx;
+		height: 110rpx;
+		border-radius: 55rpx;
+		background-color: #e8f0ff;
+		font-size: 44rpx;
+		color: #2b6cff;
+		font-weight: bold;
+		text-align: center;
+		line-height: 110rpx;
+	}
+
+	.empty-icon-text {
+		font-size: 44rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.empty-btn {
+		background-image: linear-gradient(to right, #2b6cff, #5f92ff);
+	}
+
+	.loading-more {
+		padding: 26rpx 0 40rpx 0;
+	}
+</style>

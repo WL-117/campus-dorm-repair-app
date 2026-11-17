@@ -1,0 +1,146 @@
+<template>
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	<scroll-view class="page-scroll" :scroll-y="true" :bounces="false">
+	<!-- #endif -->
+
+	<view class="page">
+		<view class="card">
+			<text class="title">{{title}}</text>
+			<view class="meta">
+				<text class="tag">{{tag}}</text>
+				<text class="time">{{time}}</text>
+			</view>
+			<view class="line"></view>
+			<text class="content">{{content}}</text>
+			<view class="sign">
+				<text class="sign-text">后勤保障部 · 学生公寓服务中心</text>
+			</view>
+		</view>
+	</view>
+
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	</scroll-view>
+	<!-- #endif -->
+</template>
+
+<script setup lang="uts">
+	import { apiNoticeDetail } from '../../common/api.uts'
+	import { ApiResult } from '../../common/types.uts'
+	import { plainToNotice } from '../../common/convert.uts'
+	import { toast, showLoading, hideLoading } from '../../common/util.uts'
+
+	const title = ref('')
+	const content = ref('')
+	const time = ref('')
+	const tag = ref('')
+
+	onLoad((options : OnLoadOptions) => {
+		const id = (options['id'] ?? '') as string
+		if (id.length == 0) {
+			toast('缺少公告参数')
+			return
+		}
+		loadDetail(id)
+	})
+
+	function loadDetail(id : string) : void {
+		showLoading('加载中')
+		apiNoticeDetail(id).then((res : ApiResult) => {
+			hideLoading()
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			const n = plainToNotice(res.data as UTSJSONObject)
+			title.value = n.title
+			content.value = n.content
+			time.value = n.time
+			tag.value = n.tag
+		})
+	}
+</script>
+
+<style>
+	page {
+		background-color: #f4f6fa;
+	}
+
+	.page {
+		background-color: #f4f6fa;
+		padding: 24rpx;
+	}
+
+	.card {
+		padding: 34rpx 30rpx;
+		border-radius: 18rpx;
+		background-color: #ffffff;
+		flex-direction: column;
+	}
+
+	.title {
+		font-size: 34rpx;
+		color: #1f2329;
+		font-weight: bold;
+		line-height: 50rpx;
+	}
+
+	.meta {
+		margin-top: 22rpx;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.tag {
+		padding: 4rpx 14rpx;
+		border-radius: 6rpx;
+		background-color: #e8f0ff;
+		color: #2b6cff;
+		font-size: 20rpx;
+	}
+
+	.time {
+		margin-left: 16rpx;
+		font-size: 22rpx;
+		color: #9aa0a6;
+	}
+
+	.line {
+		margin: 26rpx 0;
+		height: 1rpx;
+		background-color: #f0f1f4;
+	}
+
+	.content {
+		font-size: 27rpx;
+		color: #4b5563;
+		line-height: 46rpx;
+	}
+
+	.sign {
+		margin-top: 50rpx;
+		flex-direction: row;
+		justify-content: flex-end;
+	}
+
+	.sign-text {
+		font-size: 23rpx;
+		color: #9aa0a6;
+	}
+	/* ---------------- 视觉优化 ---------------- */
+	.card {
+		border-radius: 24rpx;
+	}
+
+	.tag {
+		padding: 6rpx 18rpx;
+		border-radius: 10rpx;
+	}
+
+	.title {
+		line-height: 46rpx;
+	}
+
+	.content {
+		line-height: 46rpx;
+	}
+</style>

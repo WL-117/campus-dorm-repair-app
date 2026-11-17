@@ -1,0 +1,185 @@
+/**
+ * 本地缓存与全局会话（Storage 封装）
+ * 负责：登录凭证、用户信息、报修草稿、常用数据（故障分类 / 常见故障提示 / 最近登录账号）
+ * 说明：uni-app x 中 Storage 以字符串存储，这里统一用自定义分隔符序列化，避免嵌套数组反序列化异常
+ */
+import { UserInfo, FaultTip, DEFAULT_CATEGORIES } from './types.uts'
+import { toUserInfo, emptyUser } from './convert.uts'
+import { joinStr, splitStr } from './util.uts'
+
+const KEY_TOKEN = 'dorm_repair_token'
+const KEY_USER = 'dorm_repair_user'
+const KEY_DRAFT = 'dorm_repair_draft'
+const KEY_CATEGORIES = 'dorm_repair_categories'
+const KEY_TIPS = 'dorm_repair_tips'
+const KEY_ACCOUNT = 'dorm_repair_last_account'
+
+/** 页面间数据刷新标记（仅内存，不落盘） */
+let refreshFlag = false
+
+function readStr(key : string) : string {
+	const v = uni.getStorageSync(key)
+	if (v == null) return ''
+	return v as string
+}
+
+function writeStr(key : string, value : string) : void {
+	uni.setStorageSync(key, value)
+}
+
+/* ---------------------------------- 登录凭证 ---------------------------------- */
+
+export function saveToken(token : string) : void {
+	writeStr(KEY_TOKEN, token)
+}
+
+export function getToken() : string {
+	return readStr(KEY_TOKEN)
+}
+
+export function isLogin() : boolean {
+	return readStr(KEY_TOKEN).length > 0
+}
+
+/* ---------------------------------- 用户信息 ---------------------------------- */
+
+export function saveUser(u : UserInfo) : void {
+	const record : UTSJSONObject = {
+		'id': u.id,
+		'username': u.username,
+		'nickname': u.nickname,
+		'phone': u.phone,
+		'avatar': u.avatar,
+		'gender': u.gender,
+		'dorm': u.dorm,
+		'role': u.role,
+		'createTime': u.createTime
+	}
+	writeStr(KEY_USER, JSON.stringify(record))
+}
+
+/** 读取缓存的用户信息，未缓存时返回空对象（各字段为空串） */
+export function getUser() : UserInfo {
+	const s = readStr(KEY_USER)
+	if (s.length == 0) return emptyUser()
+	const obj = JSON.parse(s) as UTSJSONObject
+	return toUserInfo(obj)
+}
+
+export function getUserId() : string {
+	return getUser().id
+}
+
+/** 当前登录用户的角色：student / admin */
+export function getRole() : string {
+	return getUser().role
+}
+
+/** 是否为管理员（管理端入口与接口权限判断） */
+export function isAdmin() : boolean {
+	return getUser().role == 'admin'
+}
+
+/** 退出登录：清除凭证与用户信息，保留记住的账号 */
+export function clearSession() : void {
+	writeStr(KEY_TOKEN, '')
+	writeStr(KEY_USER, '')
+}
+
+/* --------------------------------- 记住账号 ---------------------------------- */
+
+export function saveLastAccount(account : string) : void {
+	writeStr(KEY_ACCOUNT, account)
+}
+
+export function getLastAccount() : string {
+	return readStr(KEY_ACCOUNT)
+}
+
+/* --------------------------------- 报修草稿 ---------------------------------- */
+
+/** 保存报修草稿到本地（退出页面前调用） */
+export function saveDraft(draft : UTSJSONObject) : void {
+	writeStr(KEY_DRAFT, JSON.stringify(draft))
+}
+
+export function getDraft() : UTSJSONObject {
+	const s = readStr(KEY_DRAFT)
+	if (s.length == 0) {
+		const empty : UTSJSONObject = {}
+		return empty
+	}
+	return JSON.parse(s) as UTSJSONObject
+}
+
+export function clearDraft() : void {
+	writeStr(KEY_DRAFT, '')
+}
+
+export function hasDraft() : boolean {
+	return readStr(KEY_DRAFT).length > 0
+}
+
+/* ------------------------------- 常用数据缓存 -------------------------------- */
+
+export function saveCategories(list : string[]) : void {
+	writeStr(KEY_CATEGORIES, joinStr(list, ','))
+}
+
+export function getCategories() : string[] {
+	const s = readStr(KEY_CATEGORIES)
+	if (s.length == 0) {
+		saveCategories(DEFAULT_CATEGORIES)
+		return DEFAULT_CATEGORIES
+	}
+	return splitStr(s, ',')
+}
+
+export function saveTips(list : FaultTip[]) : void {
+	const items : string[] = []
+	for (let i = 0; i < list.length; i++) {
+		items.push(list[i].title + '##' + list[i].desc)
+	}
+	writeStr(KEY_TIPS, joinStr(items, '||'))
+}
+
+export function getTips() : FaultTip[] {
+	const res : FaultTip[] = []
+	const s = readStr(KEY_TIPS)
+	if (s.length == 0) return res
+	const items = splitStr(s, '||')
+	for (let i = 0; i < items.length; i++) {
+		const parts = splitStr(items[i], '##')
+		if (parts.length >= 2) {
+			const tip : FaultTip = {
+				title: parts[0],
+				desc: parts[1]
+			}
+			res.push(tip)
+		}
+	}
+	return res
+}
+
+/** 清空业务缓存（草稿、常用数据），不影响登录态 */
+export function clearCommonCache() : void {
+	writeStr(KEY_DRAFT, '')
+	writeStr(KEY_CATEGORIES, '')
+	writeStr(KEY_TIPS, '')
+}
+
+/* -------------------------------- 刷新标记 ----------------------------------- */
+
+/** 详情页发生变更时调用，列表页返回后据此刷新 */
+export function markRefresh() : void {
+	refreshFlag = true
+}
+
+/** 读取并消费刷新标记 */
+export function takeRefresh() : boolean {
+	if (refreshFlag) {
+		refreshFlag = false
+		return true
+	}
+	return false
+}

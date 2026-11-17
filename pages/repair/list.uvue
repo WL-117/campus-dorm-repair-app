@@ -1,0 +1,519 @@
+<template>
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	<scroll-view class="page-scroll" :scroll-y="true" :bounces="false">
+	<!-- #endif -->
+
+	<view class="page">
+		<!-- 搜索 -->
+		<view class="search-bar">
+			<input class="search-input" v-model="keyword" placeholder="搜索工单号 / 故障分类 / 描述" placeholder-class="ph" confirm-type="search" @confirm="onSearch" />
+			<view class="search-btn" @click="onSearch">
+				<text class="search-btn-text">搜索</text>
+			</view>
+		</view>
+
+		<!-- 状态筛选 -->
+		<view class="tabs">
+			<view class="tab" :class="tabIndex == index ? 'tab-on' : ''" v-for="(item, index) in tabs" :key="index" @click="switchTab(index)">
+				<text class="tab-text" :class="tabIndex == index ? 'tab-text-on' : ''">{{item}}</text>
+			</view>
+		</view>
+
+		<!-- 工单列表 -->
+		<view class="list">
+			<view class="order-card" v-for="(item, index) in list" :key="item.id" @click="goDetail(item.id)">
+				<view class="order-top">
+					<text class="order-no">{{item.orderNo}}</text>
+					<view :class="statusClass(item.status)">
+						<text :class="statusTextClass(item.status)">{{statusText(item.status)}}</text>
+					</view>
+				</view>
+				<text class="order-title">{{item.category}} · {{item.building}}-{{item.room}}</text>
+				<text class="order-desc">{{item.description}}</text>
+				<view class="order-bottom">
+					<text class="order-user">{{item.userName}}　{{item.contact}}</text>
+					<text class="order-time">{{item.createTime}}</text>
+				</view>
+				<view class="order-extra" v-if="item.level == '紧急' || item.images.length > 0">
+					<text class="level-tag" v-if="item.level == '紧急'">紧急</text>
+					<text class="img-tag" v-if="item.images.length > 0">{{item.images.length}} 张照片</text>
+				</view>
+			</view>
+		</view>
+
+		<!-- 加载更多 / 空状态 -->
+		<view class="loading-more" v-if="list.length > 0">
+			<text class="loading-text" v-if="hasMore">上拉加载更多</text>
+			<text class="loading-text" v-else>没有更多工单了</text>
+		</view>
+		<view class="empty" v-if="list.length == 0 && !loading">
+			<view class="empty-icon">
+				<text class="empty-icon-text">单</text>
+			</view>
+			<text class="empty-text">暂无相关报修工单</text>
+			<view class="empty-btn" @click="goCreate">
+				<text class="empty-btn-text">去报修</text>
+			</view>
+		</view>
+	</view>
+
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	</scroll-view>
+	<!-- #endif -->
+</template>
+
+<script setup lang="uts">
+	import { apiOrderList } from '../../common/api.uts'
+	import {
+		ApiResult, RepairOrder, STATUS_TABS, STATUS_TAB_NAMES, statusText
+	} from '../../common/types.uts'
+	import { plainToOrder, arrayVal, numVal, boolVal } from '../../common/convert.uts'
+	import { toast, showLoading, hideLoading } from '../../common/util.uts'
+	import { isLogin, takeRefresh } from '../../common/store.uts'
+
+	const PAGE_SIZE = 6
+
+	const tabs : string[] = STATUS_TAB_NAMES
+
+	const list = ref<RepairOrder[]>([])
+	const tabIndex = ref(0)
+	const keyword = ref('')
+	const pageNo = ref(1)
+	const hasMore = ref(true)
+	const loading = ref(false)
+	const total = ref(0)
+
+	onLoad((options : OnLoadOptions) => {
+		if (!isLogin()) {
+			uni.reLaunch({
+				url: '/pages/login/login'
+			})
+			return
+		}
+		loadData(true)
+	})
+
+	onPageShow(() => {
+		// 详情页发生变更（取消 / 删除）后自动刷新列表
+		if (takeRefresh()) {
+			loadData(true)
+		}
+	})
+
+	onPullDownRefresh(() => {
+		loadData(true)
+	})
+
+	onReachBottom(() => {
+		if (!hasMore.value) return
+		loadData(false)
+	})
+
+	function loadData(reset : boolean) : void {
+		if (loading.value) return
+		if (reset) {
+			pageNo.value = 1
+			hasMore.value = true
+		}
+		loading.value = true
+		if (reset) showLoading('加载中')
+
+		apiOrderList(pageNo.value, PAGE_SIZE, STATUS_TABS[tabIndex.value], 'all', keyword.value).then((res : ApiResult) => {
+			loading.value = false
+			hideLoading()
+			uni.stopPullDownRefresh()
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			const d = res.data as UTSJSONObject
+			const arr = arrayVal(d, 'list')
+			const pageList : RepairOrder[] = []
+			for (let i = 0; i < arr.length; i++) {
+				pageList.push(plainToOrder(arr[i]))
+			}
+			if (reset) {
+				list.value = pageList
+			} else {
+				const cur = list.value
+				for (let i = 0; i < pageList.length; i++) {
+					cur.push(pageList[i])
+				}
+				list.value = cur
+			}
+			total.value = numVal(d, 'total')
+			hasMore.value = boolVal(d, 'hasMore')
+			if (hasMore.value) pageNo.value = pageNo.value + 1
+		})
+	}
+
+	function statusClass(status : string) : string {
+		if (status == '0') return 'status status-0'
+		if (status == '1') return 'status status-1'
+		if (status == '2') return 'status status-2'
+		return 'status status-3'
+	}
+
+	function statusTextClass(status : string) : string {
+		if (status == '0') return 'status-text text-0'
+		if (status == '1') return 'status-text text-1'
+		if (status == '2') return 'status-text text-2'
+		return 'status-text text-3'
+	}
+
+	function switchTab(index : number) : void {
+		if (tabIndex.value == index) return
+		tabIndex.value = index
+		loadData(true)
+	}
+
+	function onSearch() : void {
+		loadData(true)
+	}
+
+	function goDetail(id : string) : void {
+		uni.navigateTo({
+			url: '/pages/repair/detail?id=' + id
+		})
+	}
+
+	function goCreate() : void {
+		uni.navigateTo({
+			url: '/pages/repair/create'
+		})
+	}
+</script>
+
+<style>
+	page {
+		background-color: #f4f6fa;
+	}
+
+	.page {
+		flex-direction: column;
+		background-color: #f4f6fa;
+		padding-bottom: 30rpx;
+	}
+
+	.search-bar {
+		margin: 20rpx 24rpx 0 24rpx;
+		height: 76rpx;
+		border-radius: 38rpx;
+		background-color: #ffffff;
+		flex-direction: row;
+		align-items: center;
+		padding-left: 30rpx;
+		padding-right: 8rpx;
+	}
+
+	.search-input {
+		flex: 1;
+		height: 72rpx;
+		font-size: 26rpx;
+		color: #1f2329;
+	}
+
+	.ph {
+		color: #b6bdc9;
+		font-size: 25rpx;
+	}
+
+	.search-btn {
+		width: 120rpx;
+		height: 60rpx;
+		border-radius: 30rpx;
+		background-color: #2b6cff;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.search-btn-text {
+		font-size: 25rpx;
+		color: #ffffff;
+	}
+
+	.tabs {
+		margin: 20rpx 24rpx 0 24rpx;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.tab {
+		flex: 1;
+		height: 68rpx;
+		margin-right: 12rpx;
+		border-radius: 34rpx;
+		background-color: #ffffff;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.tab-on {
+		background-color: #2b6cff;
+	}
+
+	.tab-text {
+		font-size: 25rpx;
+		color: #6b7280;
+	}
+
+	.tab-text-on {
+		color: #ffffff;
+		font-weight: bold;
+	}
+
+	.list {
+		margin-top: 20rpx;
+		padding: 0 24rpx;
+	}
+
+	.order-card {
+		margin-bottom: 20rpx;
+		padding: 26rpx;
+		border-radius: 18rpx;
+		background-color: #ffffff;
+		flex-direction: column;
+	}
+
+	.order-top {
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.order-no {
+		font-size: 24rpx;
+		color: #8a94a6;
+	}
+
+	.status {
+		padding: 6rpx 18rpx;
+		border-radius: 20rpx;
+	}
+
+	.status-0 {
+		background-color: #fff3e5;
+	}
+
+	.status-1 {
+		background-color: #e8f0ff;
+	}
+
+	.status-2 {
+		background-color: #e8f7ee;
+	}
+
+	.status-3 {
+		background-color: #f0f1f3;
+	}
+
+	.status-text {
+		font-size: 22rpx;
+		font-weight: bold;
+	}
+
+	.text-0 {
+		color: #ff8f1f;
+	}
+
+	.text-1 {
+		color: #2b6cff;
+	}
+
+	.text-2 {
+		color: #18a058;
+	}
+
+	.text-3 {
+		color: #9aa0a6;
+	}
+
+	.order-title {
+		margin-top: 16rpx;
+		font-size: 30rpx;
+		color: #1f2329;
+		font-weight: bold;
+	}
+
+	.order-desc {
+		margin-top: 12rpx;
+		font-size: 25rpx;
+		color: #6b7280;
+		line-height: 38rpx;
+	}
+
+	.order-bottom {
+		margin-top: 18rpx;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.order-user {
+		font-size: 23rpx;
+		color: #8a94a6;
+	}
+
+	.order-time {
+		font-size: 23rpx;
+		color: #8a94a6;
+	}
+
+	.order-extra {
+		margin-top: 14rpx;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.level-tag {
+		padding: 4rpx 14rpx;
+		border-radius: 6rpx;
+		background-color: #ffece8;
+		color: #ff6b4a;
+		font-size: 20rpx;
+		margin-right: 14rpx;
+	}
+
+	.img-tag {
+		padding: 4rpx 14rpx;
+		border-radius: 6rpx;
+		background-color: #f0f1f3;
+		color: #6b7280;
+		font-size: 20rpx;
+	}
+
+	.loading-more {
+		padding: 30rpx 0;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.loading-text {
+		font-size: 24rpx;
+		color: #9aa0a6;
+	}
+
+	.empty {
+		margin-top: 120rpx;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.empty-icon {
+		width: 120rpx;
+		height: 120rpx;
+		border-radius: 60rpx;
+		background-color: #eef1f6;
+		color: #b6bdc9;
+		font-size: 50rpx;
+		text-align: center;
+		line-height: 120rpx;
+	}
+
+	.empty-text {
+		margin-top: 24rpx;
+		font-size: 26rpx;
+		color: #9aa0a6;
+	}
+
+	.empty-btn {
+		margin-top: 30rpx;
+		padding: 14rpx 60rpx;
+		border-radius: 34rpx;
+		background-color: #2b6cff;
+	}
+
+	.empty-btn-text {
+		font-size: 27rpx;
+		color: #ffffff;
+	}
+
+	/* ---------------- 视觉优化 ---------------- */
+	.search-bar {
+		padding: 20rpx 24rpx;
+		background-color: #ffffff;
+	}
+
+	.search-input {
+		height: 72rpx;
+		border-radius: 36rpx;
+		background-color: #f4f6fa;
+		padding: 0 26rpx;
+		font-size: 26rpx;
+	}
+
+	.search-btn {
+		height: 72rpx;
+		padding: 0 34rpx;
+		border-radius: 36rpx;
+		background-image: linear-gradient(to right, #2b6cff, #5f92ff);
+	}
+
+	.tabs {
+		padding: 0 12rpx;
+		background-color: #ffffff;
+		border-bottom-width: 1rpx;
+		border-bottom-color: #f0f1f4;
+		border-bottom-style: solid;
+	}
+
+	.tab {
+		height: 88rpx;
+		flex-direction: column;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.tab-on {
+		background-color: #ffffff;
+	}
+
+	.tab-text {
+		font-size: 26rpx;
+		color: #6b7280;
+	}
+
+	.tab-text-on {
+		font-size: 27rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.order-card {
+		border-radius: 24rpx;
+		box-shadow: 0 6rpx 20rpx rgba(31, 35, 41, 0.05);
+	}
+
+	.empty {
+		margin: 40rpx 24rpx;
+		padding: 70rpx 0;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+	}
+
+	.empty-icon {
+		width: 110rpx;
+		height: 110rpx;
+		border-radius: 55rpx;
+		background-color: #e8f0ff;
+		font-size: 44rpx;
+		color: #2b6cff;
+		font-weight: bold;
+		text-align: center;
+		line-height: 110rpx;
+	}
+
+	.empty-icon-text {
+		font-size: 44rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.empty-btn {
+		background-image: linear-gradient(to right, #2b6cff, #5f92ff);
+	}
+
+	.loading-more {
+		padding: 26rpx 0 40rpx 0;
+	}
+</style>

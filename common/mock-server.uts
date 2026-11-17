@@ -1,0 +1,926 @@
+/**
+ * 模拟后端服务（Mock Server）
+ * ------------------------------------------------------------------
+ * 1. 内置「数据库」：用户表、工单表、公告表，数据持久化到 Storage，重启 App 不丢失
+ * 2. 内置路由分发：按 method + url 匹配处理函数，完全遵循 RESTful 风格
+ *    POST   /user/register      用户注册（新增）
+ *    POST   /user/login         用户登录
+ *    GET    /user/info          查询用户信息
+ *    PUT    /user/update        修改用户信息（修改）
+ *    GET    /repair/list        工单列表（分页 + 状态筛选 + 查询）
+ *    GET    /repair/detail      工单详情
+ *    POST   /repair/create      提交报修（新增）
+ *    PUT    /repair/update      修改工单
+ *    POST   /repair/cancel      取消报修
+ *    DELETE /repair/delete      删除工单（删除）
+ *    GET    /stat/mine          个人工单统计
+ *    GET    /category/list      故障分类（常用数据）
+ *    GET    /tips/list          常见故障提示
+ *    GET    /notice/list        公告列表
+ *    GET    /notice/detail      公告详情
+ * 3. 统一返回 ApiResult：{ code, message, data }
+ */
+import { UserRecord, RepairOrder, OrderLog, Notice, ApiResult, DEFAULT_CATEGORIES } from './types.uts'
+import {
+	userToPlain, plainToUser, publicUser,
+	orderToPlain, plainToOrder,
+	noticeToPlain, plainToNotice,
+	strVal, numVal, strArrayVal
+} from './convert.uts'
+import { isPhone, genId, genOrderNo, formatTime, nowTime, joinStr, splitStr } from './util.uts'
+
+/* ------------------------------ 数据库（内存） ------------------------------ */
+
+const KEY_USER_IDS = 'mock_db_user_ids'
+const KEY_ORDER_IDS = 'mock_db_order_ids'
+const KEY_NOTICE_IDS = 'mock_db_notice_ids'
+
+let users : UserRecord[] = []
+let orders : RepairOrder[] = []
+let notices : Notice[] = []
+let dbReady = false
+
+function readStr(key : string) : string {
+	const v = uni.getStorageSync(key)
+	if (v == null) return ''
+	return v as string
+}
+
+/** 逐条存储：单条记录是一个 JSON 对象，反序列化零风险 */
+function saveRecords(prefix : string, indexKey : string, plains : UTSJSONObject[], ids : string[]) : void {
+	for (let i = 0; i < plains.length; i++) {
+		uni.setStorageSync(prefix + ids[i], JSON.stringify(plains[i]))
+	}
+	uni.setStorageSync(indexKey, joinStr(ids, ','))
+}
+
+function loadRecords(prefix : string, indexKey : string) : UTSJSONObject[] {
+	const res : UTSJSONObject[] = []
+	const ids = splitStr(readStr(indexKey), ',')
+	for (let i = 0; i < ids.length; i++) {
+		if (ids[i].length == 0) continue
+		const s = readStr(prefix + ids[i])
+		if (s.length == 0) continue
+		res.push(JSON.parse(s) as UTSJSONObject)
+	}
+	return res
+}
+
+function saveUsers() : void {
+	const plains : UTSJSONObject[] = []
+	const ids : string[] = []
+	for (let i = 0; i < users.length; i++) {
+		plains.push(userToPlain(users[i]))
+		ids.push(users[i].id)
+	}
+	saveRecords('mock_db_user_', KEY_USER_IDS, plains, ids)
+}
+
+function saveOrders() : void {
+	const plains : UTSJSONObject[] = []
+	const ids : string[] = []
+	for (let i = 0; i < orders.length; i++) {
+		plains.push(orderToPlain(orders[i]))
+		ids.push(orders[i].id)
+	}
+	saveRecords('mock_db_order_', KEY_ORDER_IDS, plains, ids)
+}
+
+function saveNotices() : void {
+	const plains : UTSJSONObject[] = []
+	const ids : string[] = []
+	for (let i = 0; i < notices.length; i++) {
+		plains.push(noticeToPlain(notices[i]))
+		ids.push(notices[i].id)
+	}
+	saveRecords('mock_db_notice_', KEY_NOTICE_IDS, plains, ids)
+}
+
+function loadUsers() : void {
+	users = []
+	const arr = loadRecords('mock_db_user_', KEY_USER_IDS)
+	for (let i = 0; i < arr.length; i++) {
+		users.push(plainToUser(arr[i]))
+	}
+}
+
+function loadOrders() : void {
+	orders = []
+	const arr = loadRecords('mock_db_order_', KEY_ORDER_IDS)
+	for (let i = 0; i < arr.length; i++) {
+		orders.push(plainToOrder(arr[i]))
+	}
+}
+
+function loadNotices() : void {
+	notices = []
+	const arr = loadRecords('mock_db_notice_', KEY_NOTICE_IDS)
+	for (let i = 0; i < arr.length; i++) {
+		notices.push(plainToNotice(arr[i]))
+	}
+}
+
+function saveAll() : void {
+	saveUsers()
+	saveOrders()
+	saveNotices()
+}
+
+/* -------------------------------- 初始化数据 -------------------------------- */
+
+function buildLogs(status : string, hoursAgo : number) : OrderLog[] {
+	const logs : OrderLog[] = []
+	const t0 = formatTime(Date.now() - hoursAgo * 3600000)
+	const l0 : OrderLog = { time: t0, content: '学生提交报修申请，等待宿管中心受理' }
+	logs.push(l0)
+	if (status == '1' || status == '2') {
+		const l1 : OrderLog = { time: formatTime(Date.now() - (hoursAgo - 2) * 3600000), content: '宿管中心已受理，维修师傅已接单' }
+		logs.push(l1)
+	}
+	if (status == '2') {
+		const l2 : OrderLog = { time: formatTime(Date.now() - 1 * 3600000), content: '维修完成，请同学确认并评价' }
+		logs.push(l2)
+	}
+	if (status == '3') {
+		const l3 : OrderLog = { time: formatTime(Date.now() - (hoursAgo - 1) * 3600000), content: '学生主动取消该报修工单' }
+		logs.push(l3)
+	}
+	return logs
+}
+
+function createSeedOrder(id : string, userId : string, userName : string, category : string, building : string, room : string, contact : string, description : string, level : string, status : string, hoursAgo : number) : RepairOrder {
+	const o : RepairOrder = {
+		id: id,
+		orderNo: genOrderNo(),
+		userId: userId,
+		userName: userName,
+		category: category,
+		building: building,
+		room: room,
+		contact: contact,
+		description: description,
+		images: [],
+		level: level,
+		status: status,
+		createTime: formatTime(Date.now() - hoursAgo * 3600000),
+		updateTime: formatTime(Date.now() - Math.floor(hoursAgo / 2) * 3600000),
+		remark: '',
+		logs: buildLogs(status, hoursAgo)
+	}
+	return o
+}
+
+function seed() : void {
+	// 管理员账号（与后端 seed 保持一致）
+	const admin : UserRecord = {
+		id: 'u_1000',
+		username: 'admin',
+		password: '123456',
+		nickname: '宿舍管理中心',
+		phone: '13900000000',
+		avatar: '',
+		gender: '不限',
+		dorm: '后勤保障部',
+		role: 'admin',
+		createTime: formatTime(Date.now() - 3600000 * 24 * 180)
+	}
+	const u1 : UserRecord = {
+		id: 'u_1001',
+		username: 'student',
+		password: '123456',
+		nickname: '林小同',
+		phone: '13800138000',
+		avatar: '',
+		gender: '男',
+		dorm: 'A栋-305',
+		role: 'student',
+		createTime: formatTime(Date.now() - 3600000 * 24 * 60)
+	}
+	const u2 : UserRecord = {
+		id: 'u_1002',
+		username: 'xiaoyu',
+		password: '123456',
+		nickname: '苏小雨',
+		phone: '13612345678',
+		avatar: '',
+		gender: '女',
+		dorm: 'B栋-512',
+		role: 'student',
+		createTime: formatTime(Date.now() - 3600000 * 24 * 20)
+	}
+	users = []
+	users.push(admin)
+	users.push(u1)
+	users.push(u2)
+
+	notices = []
+	const n1 : Notice = {
+		id: 'n_1',
+		title: '关于学生宿舍冬季供暖设备集中检修的通知',
+		content: '后勤保障部将于本周对学生公寓供暖设备进行集中检修，检修期间可能出现短暂停水停电，请同学们提前做好准备。如遇供暖异常，请及时通过本平台提交报修工单。',
+		time: formatTime(Date.now() - 3600000 * 24 * 2),
+		tag: '检修'
+	}
+	const n2 : Notice = {
+		id: 'n_2',
+		title: '宿舍报修服务时效说明',
+		content: '一般故障 24 小时内受理，紧急故障（漏水、漏电、门锁损坏）4 小时内受理。提交工单时请如实填写宿舍号与联系方式，并尽量上传现场照片，以便师傅快速定位问题。',
+		time: formatTime(Date.now() - 3600000 * 24 * 5),
+		tag: '服务'
+	}
+	const n3 : Notice = {
+		id: 'n_3',
+		title: '寒假期间宿舍设施报修安排',
+		content: '寒假留校同学如需报修，请在工单中备注「寒假留校」，值班维修点设在 3 号学生公寓一楼服务台，服务时间 8:30 - 17:30。',
+		time: formatTime(Date.now() - 3600000 * 24 * 9),
+		tag: '假期'
+	}
+	notices.push(n1)
+	notices.push(n2)
+	notices.push(n3)
+
+	orders = []
+	orders.push(createSeedOrder('o_2001', u1.id, u1.nickname, '水电维修', 'A栋', '305', u1.phone, '洗手间水龙头持续滴水，地面积水严重，存在滑倒风险。', '紧急', '0', 3))
+	orders.push(createSeedOrder('o_2002', u1.id, u1.nickname, '空调电器', 'A栋', '305', u1.phone, '宿舍空调制冷效果差，开机半小时后房间温度没有变化，怀疑缺氟。', '普通', '1', 28))
+	orders.push(createSeedOrder('o_2003', u1.id, u1.nickname, '门窗家具', 'A栋', '305', u1.phone, '衣柜门合页脱落，柜门无法正常关闭。', '普通', '2', 96))
+	orders.push(createSeedOrder('o_2004', u1.id, u1.nickname, '网络宽带', 'A栋', '305', u1.phone, '宿舍网口无法识别，路由器指示灯不亮。', '普通', '3', 140))
+	orders.push(createSeedOrder('o_2005', u2.id, u2.nickname, '公共设施', 'B栋', '512', u2.phone, '楼层公共洗衣机漏水，地面湿滑。', '普通', '0', 10))
+	orders.push(createSeedOrder('o_2006', u2.id, u2.nickname, '水电维修', 'B栋', '512', u2.phone, '宿舍照明灯管闪烁，晚上无法正常自习。', '紧急', '1', 50))
+	orders.push(createSeedOrder('o_2007', u2.id, u2.nickname, '其他问题', 'C栋', '208', '13712345678', '卫生间地漏返味严重，希望安排疏通。', '普通', '2', 180))
+
+	saveAll()
+}
+
+function ensureDb() : void {
+	if (dbReady) return
+	dbReady = true
+	loadUsers()
+	loadOrders()
+	loadNotices()
+	if (users.length == 0) {
+		seed()
+	}
+}
+
+/* ------------------------------- 返回结果封装 ------------------------------- */
+
+function ok(data : any) : ApiResult {
+	const r : ApiResult = {
+		code: 0,
+		message: '操作成功',
+		data: data
+	}
+	return r
+}
+
+function fail(message : string) : ApiResult {
+	const r : ApiResult = {
+		code: 1,
+		message: message,
+		data: ''
+	}
+	return r
+}
+
+function findUser(id : string) : UserRecord | null {
+	for (let i = 0; i < users.length; i++) {
+		if (users[i].id == id) return users[i]
+	}
+	return null
+}
+
+function findOrder(id : string) : RepairOrder | null {
+	for (let i = 0; i < orders.length; i++) {
+		if (orders[i].id == id) return orders[i]
+	}
+	return null
+}
+
+function findNotice(id : string) : Notice | null {
+	for (let i = 0; i < notices.length; i++) {
+		if (notices[i].id == id) return notices[i]
+	}
+	return null
+}
+
+/* --------------------------------- 用户模块 --------------------------------- */
+
+function handleRegister(p : UTSJSONObject) : ApiResult {
+	const username = strVal(p, 'username')
+	const password = strVal(p, 'password')
+	const nickname = strVal(p, 'nickname')
+	const phone = strVal(p, 'phone')
+	const gender = strVal(p, 'gender')
+	const dorm = strVal(p, 'dorm')
+
+	if (!isPhone(phone)) return fail('请输入正确的 11 位手机号')
+	if (username.length < 4) return fail('账号长度不能少于 4 位')
+	if (password.length < 6) return fail('密码长度不能少于 6 位')
+	for (let i = 0; i < users.length; i++) {
+		if (users[i].username == username) return fail('该账号已被注册，请直接登录')
+		if (users[i].phone == phone) return fail('该手机号已注册，请直接登录')
+	}
+
+	const u : UserRecord = {
+		id: genId('u_'),
+		username: username,
+		password: password,
+		nickname: nickname.length > 0 ? nickname : '同学' + username,
+		phone: phone,
+		avatar: '',
+		gender: gender,
+		dorm: dorm,
+		role: 'student',
+		createTime: nowTime()
+	}
+	users.push(u)
+	saveUsers()
+	return ok(publicUser(u))
+}
+
+function handleLogin(p : UTSJSONObject) : ApiResult {
+	const username = strVal(p, 'username')
+	const password = strVal(p, 'password')
+	if (username.length == 0) return fail('请输入账号')
+	if (password.length == 0) return fail('请输入密码')
+
+	let target : UserRecord | null = null
+	for (let i = 0; i < users.length; i++) {
+		if (users[i].username == username || users[i].phone == username) {
+			target = users[i]
+			break
+		}
+	}
+	if (target == null) return fail('账号不存在，请先注册')
+	const user = target as UserRecord
+	if (user.password != password) return fail('账号或密码错误')
+
+	const data : UTSJSONObject = {
+		'token': 'tk_' + user.id + '_' + Date.now().toString(),
+		'userInfo': publicUser(user)
+	}
+	return ok(data)
+}
+
+function handleUserInfo(p : UTSJSONObject) : ApiResult {
+	const u = findUser(strVal(p, 'userId'))
+	if (u == null) return fail('登录状态已失效，请重新登录')
+	return ok(publicUser(u as UserRecord))
+}
+
+function handleUserUpdate(p : UTSJSONObject) : ApiResult {
+	const u = findUser(strVal(p, 'userId'))
+	if (u == null) return fail('登录状态已失效，请重新登录')
+	const user = u as UserRecord
+	const nickname = strVal(p, 'nickname')
+	const phone = strVal(p, 'phone')
+	const avatar = strVal(p, 'avatar')
+	const gender = strVal(p, 'gender')
+	const dorm = strVal(p, 'dorm')
+
+	if (nickname.length > 0) user.nickname = nickname
+	if (avatar.length > 0) user.avatar = avatar
+	if (gender.length > 0) user.gender = gender
+	if (dorm.length > 0) user.dorm = dorm
+	if (phone.length > 0) {
+		if (!isPhone(phone)) return fail('请输入正确的 11 位手机号')
+		user.phone = phone
+	}
+	saveUsers()
+	return ok(publicUser(user))
+}
+
+/* --------------------------------- 工单模块 --------------------------------- */
+
+function handleRepairCreate(p : UTSJSONObject) : ApiResult {
+	const userId = strVal(p, 'userId')
+	const u = findUser(userId)
+	if (u == null) return fail('请先登录后再提交报修')
+	const user = u as UserRecord
+
+	const category = strVal(p, 'category')
+	const building = strVal(p, 'building')
+	const room = strVal(p, 'room')
+	const contact = strVal(p, 'contact')
+	const description = strVal(p, 'description')
+	const level = strVal(p, 'level')
+
+	if (category.length == 0) return fail('请选择故障分类')
+	if (building.length == 0) return fail('请输入宿舍楼栋')
+	if (room.length == 0) return fail('请输入宿舍号')
+	if (!isPhone(contact)) return fail('请输入正确的 11 位手机号')
+	if (description.length < 5) return fail('故障描述不少于 5 个字，便于师傅定位')
+
+	const o : RepairOrder = {
+		id: genId('o_'),
+		orderNo: genOrderNo(),
+		userId: userId,
+		userName: user.nickname,
+		category: category,
+		building: building,
+		room: room,
+		contact: contact,
+		description: description,
+		images: strArrayVal(p, 'images'),
+		level: level.length > 0 ? level : '普通',
+		status: '0',
+		createTime: nowTime(),
+		updateTime: nowTime(),
+		remark: '',
+		logs: []
+	}
+	const log : OrderLog = { time: o.createTime, content: '学生提交报修申请，等待宿管中心受理' }
+	o.logs.push(log)
+	// 新工单置顶，列表按时间倒序
+	const next : RepairOrder[] = []
+	next.push(o)
+	for (let i = 0; i < orders.length; i++) {
+		next.push(orders[i])
+	}
+	orders = next
+	saveOrders()
+	return ok(orderToPlain(o))
+}
+
+function handleRepairList(p : UTSJSONObject) : ApiResult {
+	const page = numVal(p, 'page')
+	const size = numVal(p, 'size')
+	const status = strVal(p, 'status')
+	const keyword = strVal(p, 'keyword')
+	const scope = strVal(p, 'scope')
+	const userId = strVal(p, 'userId')
+
+	const filtered : RepairOrder[] = []
+	for (let i = 0; i < orders.length; i++) {
+		const o = orders[i]
+		if (scope == 'mine' && o.userId != userId) continue
+		if (status.length > 0 && o.status != status) continue
+		if (keyword.length > 0) {
+			const hit = o.orderNo.indexOf(keyword) >= 0 || o.description.indexOf(keyword) >= 0 || o.category.indexOf(keyword) >= 0
+			if (!hit) continue
+		}
+		filtered.push(o)
+	}
+
+	const start = (page - 1) * size
+	const list : UTSJSONObject[] = []
+	for (let i = start; i < filtered.length && i < start + size; i++) {
+		list.push(orderToPlain(filtered[i]))
+	}
+	const data : UTSJSONObject = {
+		'list': list,
+		'total': filtered.length,
+		'page': page,
+		'size': size,
+		'hasMore': start + list.length < filtered.length
+	}
+	return ok(data)
+}
+
+function handleRepairDetail(p : UTSJSONObject) : ApiResult {
+	const o = findOrder(strVal(p, 'id'))
+	if (o == null) return fail('工单不存在或已被删除')
+	return ok(orderToPlain(o as RepairOrder))
+}
+
+function handleRepairUpdate(p : UTSJSONObject) : ApiResult {
+	const o = findOrder(strVal(p, 'id'))
+	if (o == null) return fail('工单不存在或已被删除')
+	const order = o as RepairOrder
+	const description = strVal(p, 'description')
+	const contact = strVal(p, 'contact')
+	const room = strVal(p, 'room')
+	if (description.length > 0) order.description = description
+	if (room.length > 0) order.room = room
+	if (contact.length > 0) {
+		if (!isPhone(contact)) return fail('请输入正确的 11 位手机号')
+		order.contact = contact
+	}
+	order.updateTime = nowTime()
+	saveOrders()
+	return ok(orderToPlain(order))
+}
+
+function handleRepairCancel(p : UTSJSONObject) : ApiResult {
+	const o = findOrder(strVal(p, 'id'))
+	if (o == null) return fail('工单不存在或已被删除')
+	const order = o as RepairOrder
+	if (order.userId != strVal(p, 'userId')) return fail('只能取消本人提交的工单')
+	if (order.status != '0') return fail('只有「待处理」状态的工单可以取消')
+	order.status = '3'
+	order.updateTime = nowTime()
+	const log : OrderLog = { time: nowTime(), content: '学生主动取消该报修工单' }
+	order.logs.push(log)
+	saveOrders()
+	return ok(orderToPlain(order))
+}
+
+function handleRepairDelete(p : UTSJSONObject) : ApiResult {
+	const id = strVal(p, 'id')
+	const o = findOrder(id)
+	if (o == null) return fail('工单不存在或已被删除')
+	const order = o as RepairOrder
+	if (order.userId != strVal(p, 'userId')) return fail('只能删除本人提交的工单')
+	const next : RepairOrder[] = []
+	for (let i = 0; i < orders.length; i++) {
+		if (orders[i].id != id) next.push(orders[i])
+	}
+	orders = next
+	uni.removeStorageSync('mock_db_order_' + id)
+	saveOrders()
+	const data : UTSJSONObject = { 'id': id }
+	return ok(data)
+}
+
+function handleStat(p : UTSJSONObject) : ApiResult {
+	const userId = strVal(p, 'userId')
+	let total = 0
+	let pending = 0
+	let doing = 0
+	let done = 0
+	let canceled = 0
+	for (let i = 0; i < orders.length; i++) {
+		const o = orders[i]
+		if (o.userId != userId) continue
+		total = total + 1
+		if (o.status == '0') pending = pending + 1
+		if (o.status == '1') doing = doing + 1
+		if (o.status == '2') done = done + 1
+		if (o.status == '3') canceled = canceled + 1
+	}
+	const data : UTSJSONObject = {
+		'total': total,
+		'pending': pending,
+		'doing': doing,
+		'done': done,
+		'canceled': canceled
+	}
+	return ok(data)
+}
+
+/* ------------------------------- 常用数据模块 ------------------------------- */
+
+function handleCategoryList() : ApiResult {
+	const list : UTSJSONObject[] = []
+	for (let i = 0; i < DEFAULT_CATEGORIES.length; i++) {
+		const obj : UTSJSONObject = { 'name': DEFAULT_CATEGORIES[i] }
+		list.push(obj)
+	}
+	const data : UTSJSONObject = { 'list': list }
+	return ok(data)
+}
+
+function handleTipsList() : ApiResult {
+	const TIPS : string[] = [
+		'宿舍突然断电##先查看是否使用大功率电器导致跳闸，拔掉电器后到楼层配电箱复位闸刀，仍未恢复请报修。',
+		'水龙头漏水##先关闭下方角阀，用容器接水，再选择「水电维修」提交工单并上传漏水点照片。',
+		'宿舍网速很慢##重启光猫和路由器，检查网线是否松动，仍异常请选择「网络宽带」报修。',
+		'空调不制冷##确认模式为制冷且温度低于室温，清洗滤网后仍异常请选择「空调电器」报修。',
+		'门锁损坏##请勿强行撬锁，先在宿管处登记，再提交「门窗家具」类紧急工单。'
+	]
+	const list : UTSJSONObject[] = []
+	for (let i = 0; i < TIPS.length; i++) {
+		const parts = splitStr(TIPS[i], '##')
+		const obj : UTSJSONObject = {
+			'title': parts[0],
+			'desc': parts[1]
+		}
+		list.push(obj)
+	}
+	const data : UTSJSONObject = { 'list': list }
+	return ok(data)
+}
+
+function handleNoticeList() : ApiResult {
+	const list : UTSJSONObject[] = []
+	for (let i = 0; i < notices.length; i++) {
+		list.push(noticeToPlain(notices[i]))
+	}
+	const data : UTSJSONObject = { 'list': list }
+	return ok(data)
+}
+
+function handleNoticeDetail(p : UTSJSONObject) : ApiResult {
+	const n = findNotice(strVal(p, 'id'))
+	if (n == null) return fail('公告不存在')
+	return ok(noticeToPlain(n as Notice))
+}
+
+/* --------------------------------- 管理端模块 --------------------------------- */
+
+/** 管理员权限校验：返回管理员实体，未登录或角色不符返回 null */
+function requireAdmin(p : UTSJSONObject) : UserRecord | null {
+	const u = findUser(strVal(p, 'userId'))
+	if (u == null) return null
+	const user = u as UserRecord
+	if (user.role != 'admin') return null
+	return user
+}
+
+function readPageSize(p : UTSJSONObject) : number[] {
+	let page = numVal(p, 'page')
+	if (page <= 0) page = 1
+	let size = numVal(p, 'size')
+	if (size <= 0) size = 10
+	const res : number[] = [page, size]
+	return res
+}
+
+/** GET /admin/stat 平台总览统计 */
+function handleAdminStat(p : UTSJSONObject) : ApiResult {
+	const admin = requireAdmin(p)
+	if (admin == null) return fail('无管理员权限，请使用管理员账号登录')
+
+	let students = 0
+	let admins = 0
+	for (let i = 0; i < users.length; i++) {
+		if (users[i].role == 'admin') admins = admins + 1
+		else students = students + 1
+	}
+
+	const today = nowTime().substring(0, 10)
+	let pending = 0
+	let doing = 0
+	let done = 0
+	let canceled = 0
+	let urgent = 0
+	let todayOrders = 0
+	for (let i = 0; i < orders.length; i++) {
+		const o = orders[i]
+		if (o.status == '0') pending = pending + 1
+		if (o.status == '1') doing = doing + 1
+		if (o.status == '2') done = done + 1
+		if (o.status == '3') canceled = canceled + 1
+		if (o.level == '紧急') urgent = urgent + 1
+		if (o.createTime.substring(0, 10) == today) todayOrders = todayOrders + 1
+	}
+	const data : UTSJSONObject = {
+		'users': users.length,
+		'students': students,
+		'admins': admins,
+		'orders': orders.length,
+		'pending': pending,
+		'doing': doing,
+		'done': done,
+		'canceled': canceled,
+		'urgent': urgent,
+		'todayOrders': todayOrders,
+		'notices': notices.length
+	}
+	return ok(data)
+}
+
+/** GET /admin/user/list 用户列表 */
+function handleAdminUserList(p : UTSJSONObject) : ApiResult {
+	const admin = requireAdmin(p)
+	if (admin == null) return fail('无管理员权限，请使用管理员账号登录')
+	const ps = readPageSize(p)
+	const page = ps[0]
+	const size = ps[1]
+	const role = strVal(p, 'role')
+	const keyword = strVal(p, 'keyword')
+
+	const filtered : UserRecord[] = []
+	for (let i = 0; i < users.length; i++) {
+		const u = users[i]
+		if (role.length > 0 && u.role != role) continue
+		if (keyword.length > 0) {
+			const hit = u.nickname.indexOf(keyword) >= 0 || u.username.indexOf(keyword) >= 0 || u.phone.indexOf(keyword) >= 0 || u.dorm.indexOf(keyword) >= 0
+			if (!hit) continue
+		}
+		filtered.push(u)
+	}
+
+	const start = (page - 1) * size
+	const list : UTSJSONObject[] = []
+	for (let i = start; i < filtered.length && i < start + size; i++) {
+		const info = publicUser(filtered[i])
+		let count = 0
+		for (let j = 0; j < orders.length; j++) {
+			if (orders[j].userId == filtered[i].id) count = count + 1
+		}
+		info['orderCount'] = count
+		list.push(info)
+	}
+	const data : UTSJSONObject = {
+		'list': list,
+		'total': filtered.length,
+		'page': page,
+		'size': size,
+		'hasMore': start + list.length < filtered.length
+	}
+	return ok(data)
+}
+
+/** DELETE /admin/user/delete 删除用户（级联删除工单） */
+function handleAdminUserDelete(p : UTSJSONObject) : ApiResult {
+	const admin = requireAdmin(p)
+	if (admin == null) return fail('无管理员权限，请使用管理员账号登录')
+	const a = admin as UserRecord
+	const id = strVal(p, 'id')
+	if (id == a.id) return fail('不能删除当前登录的管理员账号')
+	const u = findUser(id)
+	if (u == null) return fail('用户不存在或已被删除')
+	const user = u as UserRecord
+	if (user.role == 'admin') {
+		let adminCount = 0
+		for (let i = 0; i < users.length; i++) {
+			if (users[i].role == 'admin') adminCount = adminCount + 1
+		}
+		if (adminCount <= 1) return fail('系统至少需要保留一个管理员账号')
+	}
+
+	const nextUsers : UserRecord[] = []
+	for (let i = 0; i < users.length; i++) {
+		if (users[i].id != id) nextUsers.push(users[i])
+	}
+	users = nextUsers
+	const nextOrders : RepairOrder[] = []
+	for (let i = 0; i < orders.length; i++) {
+		if (orders[i].userId != id) nextOrders.push(orders[i])
+	}
+	orders = nextOrders
+	uni.removeStorageSync('mock_db_user_' + id)
+	saveUsers()
+	saveOrders()
+	const data : UTSJSONObject = { 'id': id }
+	return ok(data)
+}
+
+/** GET /admin/order/list 工单管理列表 */
+function handleAdminOrderList(p : UTSJSONObject) : ApiResult {
+	const admin = requireAdmin(p)
+	if (admin == null) return fail('无管理员权限，请使用管理员账号登录')
+	const ps = readPageSize(p)
+	const page = ps[0]
+	const size = ps[1]
+	const status = strVal(p, 'status')
+	const keyword = strVal(p, 'keyword')
+
+	const filtered : RepairOrder[] = []
+	for (let i = 0; i < orders.length; i++) {
+		const o = orders[i]
+		if (status.length > 0 && o.status != status) continue
+		if (keyword.length > 0) {
+			const hit = o.orderNo.indexOf(keyword) >= 0 || o.description.indexOf(keyword) >= 0 || o.category.indexOf(keyword) >= 0 || o.userName.indexOf(keyword) >= 0 || (o.building + o.room).indexOf(keyword) >= 0
+			if (!hit) continue
+		}
+		filtered.push(o)
+	}
+	const start = (page - 1) * size
+	const list : UTSJSONObject[] = []
+	for (let i = start; i < filtered.length && i < start + size; i++) {
+		list.push(orderToPlain(filtered[i]))
+	}
+	const data : UTSJSONObject = {
+		'list': list,
+		'total': filtered.length,
+		'page': page,
+		'size': size,
+		'hasMore': start + list.length < filtered.length
+	}
+	return ok(data)
+}
+
+/** PUT /admin/order/status 推进工单状态 */
+function handleAdminOrderStatus(p : UTSJSONObject) : ApiResult {
+	const admin = requireAdmin(p)
+	if (admin == null) return fail('无管理员权限，请使用管理员账号登录')
+	const a = admin as UserRecord
+	const o = findOrder(strVal(p, 'id'))
+	if (o == null) return fail('工单不存在或已被删除')
+	const order = o as RepairOrder
+	const status = strVal(p, 'status')
+	if (status != '1' && status != '2') return fail('只能将工单推进为「维修中」或「已完成」')
+	if (order.status == '2') return fail('该工单已完成，无需再次处理')
+	if (order.status == '3') return fail('该工单已取消，无法继续处理')
+	if (status == '1' && order.status != '0') return fail('该工单已在维修中')
+	if (status == '2' && order.status != '1') return fail('请先将工单置为「维修中」')
+
+	order.status = status
+	order.updateTime = nowTime()
+	if (status == '1') {
+		const log : OrderLog = { time: nowTime(), content: '宿管中心已受理，维修师傅已接单（处理人：' + a.nickname + '）' }
+		order.logs.push(log)
+	} else {
+		const log : OrderLog = { time: nowTime(), content: '维修完成，请同学确认（处理人：' + a.nickname + '）' }
+		order.logs.push(log)
+	}
+	saveOrders()
+	return ok(orderToPlain(order))
+}
+
+/** PUT /admin/order/remark 管理员填写处理备注 */
+function handleAdminOrderRemark(p : UTSJSONObject) : ApiResult {
+	const admin = requireAdmin(p)
+	if (admin == null) return fail('无管理员权限，请使用管理员账号登录')
+	const a = admin as UserRecord
+	const o = findOrder(strVal(p, 'id'))
+	if (o == null) return fail('工单不存在或已被删除')
+	const order = o as RepairOrder
+	const remark = strVal(p, 'remark')
+	if (remark.length == 0) return fail('请填写处理备注')
+	order.remark = remark
+	order.updateTime = nowTime()
+	const log : OrderLog = { time: nowTime(), content: '管理员备注：' + remark + '（' + a.nickname + '）' }
+	order.logs.push(log)
+	saveOrders()
+	return ok(orderToPlain(order))
+}
+
+/** POST /admin/notice/create 发布公告 */
+function handleAdminNoticeCreate(p : UTSJSONObject) : ApiResult {
+	const admin = requireAdmin(p)
+	if (admin == null) return fail('无管理员权限，请使用管理员账号登录')
+	const title = strVal(p, 'title')
+	const content = strVal(p, 'content')
+	const tag = strVal(p, 'tag')
+	if (title.length == 0) return fail('请输入公告标题')
+	if (content.length < 5) return fail('公告内容不少于 5 个字')
+
+	const n : Notice = {
+		id: genId('n_'),
+		title: title,
+		content: content,
+		time: nowTime(),
+		tag: tag.length > 0 ? tag : '通知'
+	}
+	// 新公告置顶
+	const next : Notice[] = []
+	next.push(n)
+	for (let i = 0; i < notices.length; i++) {
+		next.push(notices[i])
+	}
+	notices = next
+	saveNotices()
+	return ok(noticeToPlain(n))
+}
+
+/** PUT /admin/notice/update 修改公告 */
+function handleAdminNoticeUpdate(p : UTSJSONObject) : ApiResult {
+	const admin = requireAdmin(p)
+	if (admin == null) return fail('无管理员权限，请使用管理员账号登录')
+	const n = findNotice(strVal(p, 'id'))
+	if (n == null) return fail('公告不存在')
+	const notice = n as Notice
+	const title = strVal(p, 'title')
+	const content = strVal(p, 'content')
+	const tag = strVal(p, 'tag')
+	if (title.length > 0) notice.title = title
+	if (content.length > 0) notice.content = content
+	if (tag.length > 0) notice.tag = tag
+	saveNotices()
+	return ok(noticeToPlain(notice))
+}
+
+/** DELETE /admin/notice/delete 删除公告 */
+function handleAdminNoticeDelete(p : UTSJSONObject) : ApiResult {
+	const admin = requireAdmin(p)
+	if (admin == null) return fail('无管理员权限，请使用管理员账号登录')
+	const id = strVal(p, 'id')
+	if (findNotice(id) == null) return fail('公告不存在')
+	const next : Notice[] = []
+	for (let i = 0; i < notices.length; i++) {
+		if (notices[i].id != id) next.push(notices[i])
+	}
+	notices = next
+	saveNotices()
+	const data : UTSJSONObject = { 'id': id }
+	return ok(data)
+}
+
+/* --------------------------------- 路由分发 --------------------------------- */
+
+export function mockHandle(method : string, url : string, params : UTSJSONObject) : ApiResult {
+	ensureDb()
+
+	if (url == '/user/register' && method == 'POST') return handleRegister(params)
+	if (url == '/user/login' && method == 'POST') return handleLogin(params)
+	if (url == '/user/info' && method == 'GET') return handleUserInfo(params)
+	if (url == '/user/update' && method == 'PUT') return handleUserUpdate(params)
+
+	if (url == '/repair/create' && method == 'POST') return handleRepairCreate(params)
+	if (url == '/repair/list' && method == 'GET') return handleRepairList(params)
+	if (url == '/repair/detail' && method == 'GET') return handleRepairDetail(params)
+	if (url == '/repair/update' && method == 'PUT') return handleRepairUpdate(params)
+	if (url == '/repair/cancel' && method == 'POST') return handleRepairCancel(params)
+	if (url == '/repair/delete' && method == 'DELETE') return handleRepairDelete(params)
+	if (url == '/stat/mine' && method == 'GET') return handleStat(params)
+
+	if (url == '/category/list' && method == 'GET') return handleCategoryList()
+	if (url == '/tips/list' && method == 'GET') return handleTipsList()
+	if (url == '/notice/list' && method == 'GET') return handleNoticeList()
+	if (url == '/notice/detail' && method == 'GET') return handleNoticeDetail(params)
+
+	if (url == '/admin/stat' && method == 'GET') return handleAdminStat(params)
+	if (url == '/admin/user/list' && method == 'GET') return handleAdminUserList(params)
+	if (url == '/admin/user/delete' && method == 'DELETE') return handleAdminUserDelete(params)
+	if (url == '/admin/order/list' && method == 'GET') return handleAdminOrderList(params)
+	if (url == '/admin/order/status' && method == 'PUT') return handleAdminOrderStatus(params)
+	if (url == '/admin/order/remark' && method == 'PUT') return handleAdminOrderRemark(params)
+	if (url == '/admin/notice/create' && method == 'POST') return handleAdminNoticeCreate(params)
+	if (url == '/admin/notice/update' && method == 'PUT') return handleAdminNoticeUpdate(params)
+	if (url == '/admin/notice/delete' && method == 'DELETE') return handleAdminNoticeDelete(params)
+
+	return fail('接口不存在：' + method + ' ' + url)
+}

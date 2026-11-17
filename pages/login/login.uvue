@@ -1,0 +1,366 @@
+<template>
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	<scroll-view class="page-scroll" :scroll-y="true" :bounces="false">
+	<!-- #endif -->
+
+	<view class="page">
+		<view class="top-bg"></view>
+
+		<view class="content">
+			<view class="logo-wrap">
+				<text class="logo-text">宿</text>
+			</view>
+			<text class="app-name">校园宿舍报修</text>
+			<text class="app-desc">在线提交 · 进度可查 · 省心生活</text>
+
+			<view class="card">
+				<view class="field">
+					<text class="field-label">账号</text>
+					<input class="field-input" v-model="account" placeholder="请输入学号 / 手机号" placeholder-class="ph" maxlength="20" />
+				</view>
+				<view class="divider"></view>
+				<view class="field">
+					<text class="field-label">密码</text>
+					<input class="field-input" :password="true" v-model="password" placeholder="请输入登录密码" placeholder-class="ph" maxlength="18" />
+				</view>
+			</view>
+
+			<view class="row">
+				<view class="remember" @click="toggleRemember">
+					<view class="check" :class="remember ? 'check-on' : ''">
+						<text class="check-text" v-if="remember">√</text>
+					</view>
+					<text class="remember-text">记住账号</text>
+					</view>
+					<text class="demo" @click="useDemo">使用演示账号</text>
+					</view>
+
+					<view class="quick-row">
+					<view class="quick-chip" @click="useDemo">
+					<text class="quick-chip-text">学生 student</text>
+					</view>
+					<view class="quick-chip quick-chip-admin" @click="useAdmin">
+					<text class="quick-chip-text quick-chip-text-admin">管理员 admin</text>
+					</view>
+					</view>
+
+					<view class="btn-login" @click="onLogin">
+				<text class="btn-login-text">登 录</text>
+			</view>
+			<view class="btn-register" @click="goRegister">
+				<text class="btn-register-text">还没有账号？立即注册</text>
+			</view>
+		</view>
+
+		<text class="tips">演示密码统一为 123456，点击上方标签可一键填入</text>
+	</view>
+
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	</scroll-view>
+	<!-- #endif -->
+</template>
+
+<script setup lang="uts">
+	import { apiLogin } from '../../common/api.uts'
+	import { ApiResult } from '../../common/types.uts'
+	import { toUserInfo, objVal, strVal } from '../../common/convert.uts'
+	import { toast, successToast, showLoading, hideLoading } from '../../common/util.uts'
+	import {
+		saveToken, saveUser, saveLastAccount, getLastAccount, getUser, getToken
+	} from '../../common/store.uts'
+
+	const account = ref('')
+	const password = ref('')
+	const remember = ref(true)
+
+	onLoad((options : OnLoadOptions) => {
+		// 本地缓存：回填上次登录账号
+		const last = getLastAccount()
+		if (last.length > 0) {
+			account.value = last
+			password.value = ''
+		}
+		// 本地缓存：已登录且凭证有效时免登录进入首页
+		if (getToken().length > 0 && getUser().id.length > 0) {
+			uni.switchTab({
+				url: '/pages/index/index'
+			})
+		}
+	})
+
+	function toggleRemember() : void {
+		remember.value = !remember.value
+	}
+
+	function useDemo() : void {
+		account.value = 'student'
+		password.value = '123456'
+	}
+
+	/** 一键填入管理员账号，登录后可在「我的」进入管理控制台 */
+	function useAdmin() : void {
+		account.value = 'admin'
+		password.value = '123456'
+	}
+
+	function goRegister() : void {
+		uni.navigateTo({
+			url: '/pages/register/register'
+		})
+	}
+
+	function onLogin() : void {
+		const acc = account.value
+		const pwd = password.value
+		if (acc.length == 0) {
+			toast('请输入账号')
+			return
+		}
+		if (pwd.length == 0) {
+			toast('请输入密码')
+			return
+		}
+		if (pwd.length < 6) {
+			toast('密码长度不能少于 6 位')
+			return
+		}
+
+		showLoading('登录中')
+		apiLogin(acc, pwd).then((res : ApiResult) => {
+			hideLoading()
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			// 服务端返回：{ token, userInfo }
+			const data = res.data as UTSJSONObject
+			const token = strVal(data, 'token')
+			const userInfo = toUserInfo(objVal(data, 'userInfo'))
+
+			// 写入本地缓存
+			saveToken(token)
+			saveUser(userInfo)
+			if (remember.value) {
+				saveLastAccount(acc)
+			}
+
+			successToast('登录成功')
+			setTimeout(() => {
+				uni.switchTab({
+					url: '/pages/index/index'
+				})
+			}, 600)
+		})
+	}
+</script>
+
+<style>
+	page {
+		background-color: #f4f6fa;
+	}
+
+	.page {
+		flex-direction: column;
+		align-items: center;
+		background-color: #f4f6fa;
+	}
+
+	.top-bg {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 750rpx;
+		height: 420rpx;
+		background-color: #2b6cff;
+	}
+
+	.content {
+		flex-direction: column;
+		align-items: center;
+		width: 750rpx;
+		padding-top: 100rpx;
+	}
+
+	.logo-wrap {
+		width: 130rpx;
+		height: 130rpx;
+		border-radius: 32rpx;
+		background-color: #ffffff;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.logo-text {
+		font-size: 62rpx;
+		color: #2b6cff;
+		font-weight: bold;
+	}
+
+	.app-name {
+		margin-top: 26rpx;
+		font-size: 42rpx;
+		color: #ffffff;
+		font-weight: bold;
+	}
+
+	.app-desc {
+		margin-top: 12rpx;
+		font-size: 24rpx;
+		color: #d9e4ff;
+	}
+
+	.card {
+		width: 640rpx;
+		margin-top: 60rpx;
+		padding: 10rpx 30rpx;
+		background-color: #ffffff;
+		border-radius: 20rpx;
+		flex-direction: column;
+	}
+
+	.field {
+		height: 110rpx;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.field-label {
+		width: 110rpx;
+		font-size: 29rpx;
+		color: #1f2329;
+	}
+
+	.field-input {
+		flex: 1;
+		height: 100rpx;
+		font-size: 29rpx;
+		color: #1f2329;
+	}
+
+	.ph {
+		color: #b6bdc9;
+		font-size: 28rpx;
+	}
+
+	.divider {
+		height: 1rpx;
+		background-color: #f0f1f4;
+	}
+
+	.row {
+		width: 640rpx;
+		margin-top: 26rpx;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.remember {
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.check {
+		width: 34rpx;
+		height: 34rpx;
+		border-radius: 8rpx;
+		border-width: 2rpx;
+		border-color: #c8ced9;
+		border-style: solid;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.check-on {
+		background-color: #2b6cff;
+		border-color: #2b6cff;
+	}
+
+	.check-text {
+		font-size: 22rpx;
+		color: #ffffff;
+	}
+
+	.remember-text {
+		margin-left: 12rpx;
+		font-size: 26rpx;
+		color: #6b7280;
+	}
+
+	.demo {
+		font-size: 26rpx;
+		color: #2b6cff;
+	}
+
+	.btn-login {
+		width: 640rpx;
+		height: 92rpx;
+		margin-top: 50rpx;
+		border-radius: 46rpx;
+		background-color: #2b6cff;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.btn-login-text {
+		font-size: 32rpx;
+		color: #ffffff;
+		font-weight: bold;
+	}
+
+	.btn-register {
+		margin-top: 34rpx;
+		padding: 10rpx 30rpx;
+	}
+
+	.btn-register-text {
+		font-size: 27rpx;
+		color: #2b6cff;
+	}
+
+	.tips {
+		margin-top: 60rpx;
+		font-size: 24rpx;
+		color: #9aa0a6;
+	}
+
+	/* ---------------- 视觉优化 ---------------- */
+	.top-bg {
+		background-image: linear-gradient(to bottom, #2b6cff, #6a9bff);
+	}
+
+	.card {
+		border-radius: 24rpx;
+	}
+
+	.btn-login {
+		background-image: linear-gradient(to right, #2b6cff, #5f92ff);
+	}
+
+	.quick-row {
+		margin-top: 26rpx;
+		width: 640rpx;
+		flex-direction: row;
+		justify-content: center;
+	}
+
+	.quick-chip {
+		padding: 14rpx 30rpx;
+		border-radius: 32rpx;
+		background-color: #e8f0ff;
+	}
+
+	.quick-chip-admin {
+		margin-left: 20rpx;
+		background-color: #fff1e6;
+	}
+
+	.quick-chip-text {
+		font-size: 24rpx;
+		color: #2b6cff;
+	}
+
+	.quick-chip-text-admin {
+		color: #ff8f1f;
+	}
+</style>

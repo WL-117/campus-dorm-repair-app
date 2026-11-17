@@ -1,0 +1,602 @@
+<template>
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	<scroll-view class="page-scroll" :scroll-y="true" :bounces="false">
+	<!-- #endif -->
+
+	<view class="page">
+		<!-- 搜索 -->
+		<view class="search-bar">
+			<view class="search-box">
+				<text class="search-icon">⌕</text>
+				<input class="search-input" v-model="keyword" placeholder="搜索工单号 / 楼栋 / 同学 / 分类" placeholder-class="ph" :maxlength="30" @confirm="doSearch" />
+				<text class="search-clear" v-if="keyword.length > 0" @click="clearKeyword">×</text>
+			</view>
+			<view class="search-btn" @click="doSearch">
+				<text class="search-btn-text">搜索</text>
+			</view>
+		</view>
+
+		<!-- 状态筛选 -->
+		<view class="tabs">
+			<view class="tab" v-for="(item, index) in tabs" :key="index" @click="switchTab(index)">
+				<text class="tab-text" :class="index == tabIndex ? 'tab-text-active' : ''">{{item.name}}</text>
+				<view class="tab-line" v-if="index == tabIndex"></view>
+			</view>
+		</view>
+
+		<!-- 工单列表 -->
+		<view class="list">
+			<view class="order-card" v-for="item in list" :key="item.id">
+				<view class="order-top" @click="openDetail(item.id)">
+					<view class="order-title-row">
+						<text class="order-cat">{{item.category}}</text>
+						<text :class="statusClass(item.status)">{{statusText(item.status)}}</text>
+						<text class="level-tag" v-if="item.level == '紧急'">紧急</text>
+					</view>
+					<text class="order-no">工单号 {{item.orderNo}}</text>
+					<text class="order-desc">{{item.description}}</text>
+					<view class="order-meta">
+						<text class="meta-text">{{item.building}}-{{item.room}}</text>
+						<text class="meta-text">{{item.userName}}</text>
+						<text class="meta-text">{{item.contact}}</text>
+					</view>
+					<view class="order-foot">
+						<text class="foot-time">{{item.createTime}}</text>
+						<text class="foot-remark" v-if="item.remark.length > 0">备注：{{item.remark}}</text>
+					</view>
+				</view>
+
+				<view class="actions">
+					<view class="act-btn" v-if="item.status == '0'" @click="changeStatus(item.id, '1')">
+						<text class="act-btn-text">受理</text>
+					</view>
+					<view class="act-btn" v-if="item.status == '1'" @click="changeStatus(item.id, '2')">
+						<text class="act-btn-text">完成</text>
+					</view>
+					<view class="act-btn act-btn-plain" v-if="item.status == '0' || item.status == '1'" @click="toggleRemark(item.id)">
+						<text class="act-btn-plain-text">备注</text>
+					</view>
+					<view class="act-btn act-btn-plain" @click="openDetail(item.id)">
+						<text class="act-btn-plain-text">详情</text>
+					</view>
+				</view>
+
+				<!-- 备注输入面板 -->
+				<view class="remark-panel" v-if="remarkId == item.id">
+					<textarea class="remark-input" v-model="remarkText" placeholder="填写处理备注，如：已更换配件、预计明日上门" placeholder-class="ph" :maxlength="100" />
+					<view class="remark-actions">
+						<view class="remark-btn remark-btn-plain" @click="cancelRemark">
+							<text class="remark-plain-text">取消</text>
+						</view>
+						<view class="remark-btn" @click="submitRemark(item.id)">
+							<text class="remark-btn-text">提交备注</text>
+						</view>
+					</view>
+				</view>
+			</view>
+		</view>
+
+		<!-- 空状态 -->
+		<view class="empty" v-if="list.length == 0 && !loading">
+			<view class="empty-icon">
+				<text class="empty-icon-text">单</text>
+			</view>
+			<text class="empty-title">没有找到相关工单</text>
+			<text class="empty-desc">换个状态或关键词试试</text>
+		</view>
+
+		<view class="load-tip" v-if="list.length > 0">
+			<text class="load-tip-text">{{hasMore ? '上拉加载更多' : '已经到底啦'}}</text>
+		</view>
+
+		<view class="bottom"></view>
+	</view>
+
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	</scroll-view>
+	<!-- #endif -->
+</template>
+
+<script setup lang="uts">
+	import { apiAdminOrderList, apiAdminUpdateStatus, apiAdminRemark } from '../../common/api.uts'
+	import { RepairOrder, ApiResult, TabItem, STATUS_TABS, STATUS_TAB_NAMES, statusText } from '../../common/types.uts'
+	import { plainToOrder, arrayVal, boolVal } from '../../common/convert.uts'
+	import { toast, successToast, confirmDialog, showLoading, hideLoading } from '../../common/util.uts'
+	import { isLogin, isAdmin } from '../../common/store.uts'
+
+	const PAGE_SIZE : number = 10
+	const tabs = ref<TabItem[]>([])
+	const tabIndex = ref(0)
+	const keyword = ref('')
+	const pageNo = ref(1)
+	const hasMore = ref(false)
+	const loading = ref(false)
+	const list = ref<RepairOrder[]>([])
+	const remarkId = ref('')
+	const remarkText = ref('')
+
+	onLoad((options : OnLoadOptions) => {
+		const items : TabItem[] = []
+		for (let i = 0; i < STATUS_TABS.length; i++) {
+			const obj : TabItem = { value: STATUS_TABS[i], name: STATUS_TAB_NAMES[i] }
+			items.push(obj)
+		}
+		tabs.value = items
+
+		const st = (options['status'] ?? '') as string
+		if (st.length > 0) {
+			for (let i = 0; i < STATUS_TABS.length; i++) {
+				if (STATUS_TABS[i] == st) tabIndex.value = i
+			}
+		}
+	})
+
+	onPageShow(() => {
+		if (!isLogin()) {
+			uni.reLaunch({
+				url: '/pages/login/login'
+			})
+			return
+		}
+		if (!isAdmin()) {
+			toast('仅管理员可进入工单管理')
+			uni.navigateBack()
+			return
+		}
+		reload()
+	})
+
+	onPullDownRefresh(() => {
+		reload()
+	})
+
+	onReachBottom(() => {
+		if (!hasMore.value || loading.value) return
+		pageNo.value = pageNo.value + 1
+		loadList(false)
+	})
+
+	function reload() : void {
+		pageNo.value = 1
+		loadList(true)
+	}
+
+	function doSearch() : void {
+		showLoading('搜索中')
+		reload()
+	}
+
+	function clearKeyword() : void {
+		keyword.value = ''
+		reload()
+	}
+
+	function switchTab(index : number) : void {
+		if (tabIndex.value == index) return
+		tabIndex.value = index
+		showLoading('加载中')
+		reload()
+	}
+
+	function loadList(reset : boolean) : void {
+		loading.value = true
+		const status = STATUS_TABS[tabIndex.value]
+		apiAdminOrderList(pageNo.value, PAGE_SIZE, status, keyword.value).then((res : ApiResult) => {
+			loading.value = false
+			hideLoading()
+			uni.stopPullDownRefresh()
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			const d = res.data as UTSJSONObject
+			const arr = arrayVal(d, 'list')
+			const items : RepairOrder[] = []
+			for (let i = 0; i < arr.length; i++) {
+				items.push(plainToOrder(arr[i]))
+			}
+			if (reset) {
+				list.value = items
+			} else {
+				const next : RepairOrder[] = []
+				for (let i = 0; i < list.value.length; i++) {
+					next.push(list.value[i])
+				}
+				for (let i = 0; i < items.length; i++) {
+					next.push(items[i])
+				}
+				list.value = next
+			}
+			hasMore.value = boolVal(d, 'hasMore')
+		})
+	}
+
+	function changeStatus(id : string, status : string) : void {
+		const tip = status == '1' ? '确认受理该工单？' : '确认将该工单标记为已完成？'
+		confirmDialog('工单处理', tip).then((yes : boolean) => {
+			if (!yes) return
+			showLoading('处理中')
+			apiAdminUpdateStatus(id, status).then((res : ApiResult) => {
+				hideLoading()
+				if (res.code != 0) {
+					toast(res.message)
+					return
+				}
+				successToast(status == '1' ? '已受理' : '已完成')
+				reload()
+			})
+		})
+	}
+
+	function toggleRemark(id : string) : void {
+		if (remarkId.value == id) {
+			remarkId.value = ''
+			return
+		}
+		remarkId.value = id
+		remarkText.value = ''
+	}
+
+	function cancelRemark() : void {
+		remarkId.value = ''
+		remarkText.value = ''
+	}
+
+	function submitRemark(id : string) : void {
+		if (remarkText.value.length == 0) {
+			toast('请填写处理备注')
+			return
+		}
+		showLoading('提交中')
+		apiAdminRemark(id, remarkText.value).then((res : ApiResult) => {
+			hideLoading()
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			successToast('备注已提交')
+			remarkId.value = ''
+			remarkText.value = ''
+			reload()
+		})
+	}
+
+	/** 状态标签样式：与工单状态一一对应 */
+	function statusClass(status : string) : string {
+		if (status == '0') return 'status-tag status-0'
+		if (status == '1') return 'status-tag status-1'
+		if (status == '2') return 'status-tag status-2'
+		return 'status-tag status-3'
+	}
+
+	function openDetail(id : string) : void {
+		uni.navigateTo({
+			url: '/pages/repair/detail?id=' + id
+		})
+	}
+</script>
+
+<style>
+	page {
+		background-color: #f4f6fa;
+	}
+
+	.page {
+		flex-direction: column;
+		background-color: #f4f6fa;
+	}
+
+	.search-bar {
+		padding: 20rpx 24rpx;
+		background-color: #ffffff;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.search-box {
+		flex: 1;
+		height: 72rpx;
+		border-radius: 36rpx;
+		background-color: #f4f6fa;
+		flex-direction: row;
+		align-items: center;
+		padding: 0 22rpx;
+	}
+
+	.search-icon {
+		font-size: 30rpx;
+		color: #9aa0a6;
+		margin-right: 12rpx;
+	}
+
+	.search-input {
+		flex: 1;
+		font-size: 26rpx;
+		color: #1f2329;
+	}
+
+	.search-clear {
+		font-size: 32rpx;
+		color: #c3c9d4;
+		padding: 0 8rpx;
+	}
+
+	.search-btn {
+		margin-left: 16rpx;
+		padding: 0 30rpx;
+		height: 72rpx;
+		border-radius: 36rpx;
+		background-image: linear-gradient(to right, #2b6cff, #5f92ff);
+		justify-content: center;
+		align-items: center;
+	}
+
+	.search-btn-text {
+		font-size: 26rpx;
+		color: #ffffff;
+	}
+
+	.tabs {
+		padding: 0 12rpx;
+		background-color: #ffffff;
+		flex-direction: row;
+		border-bottom-width: 1rpx;
+		border-bottom-color: #f0f1f4;
+		border-bottom-style: solid;
+	}
+
+	.tab {
+		flex: 1;
+		height: 88rpx;
+		flex-direction: column;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.tab-text {
+		font-size: 26rpx;
+		color: #6b7280;
+	}
+
+	.tab-text-active {
+		font-size: 27rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.tab-line {
+		margin-top: 8rpx;
+		width: 44rpx;
+		height: 6rpx;
+		border-radius: 3rpx;
+		background-color: #2b6cff;
+	}
+
+	.list {
+		padding: 20rpx 24rpx 0 24rpx;
+	}
+
+	.order-card {
+		margin-bottom: 20rpx;
+		padding: 24rpx;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+		flex-direction: column;
+	}
+
+	.order-title-row {
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.order-cat {
+		font-size: 28rpx;
+		font-weight: bold;
+		color: #1f2329;
+	}
+
+	.status-tag {
+		margin-left: 12rpx;
+		padding: 4rpx 14rpx;
+		border-radius: 8rpx;
+		font-size: 21rpx;
+	}
+
+	.status-0 {
+		background-color: #fff3e5;
+		color: #ff8f1f;
+	}
+
+	.status-1 {
+		background-color: #e8f0ff;
+		color: #2b6cff;
+	}
+
+	.status-2 {
+		background-color: #e8f7ee;
+		color: #18a058;
+	}
+
+	.status-3 {
+		background-color: #f0f1f3;
+		color: #9aa0a6;
+	}
+
+	.level-tag {
+		margin-left: 12rpx;
+		padding: 4rpx 12rpx;
+		border-radius: 8rpx;
+		background-color: #ffece8;
+		color: #f5222d;
+		font-size: 20rpx;
+	}
+
+	.order-no {
+		margin-top: 10rpx;
+		font-size: 22rpx;
+		color: #9aa0a6;
+	}
+
+	.order-desc {
+		margin-top: 12rpx;
+		font-size: 25rpx;
+		color: #4b5563;
+		line-height: 38rpx;
+	}
+
+	.order-meta {
+		margin-top: 14rpx;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.meta-text {
+		margin-right: 20rpx;
+		font-size: 22rpx;
+		color: #6b7280;
+	}
+
+	.order-foot {
+		margin-top: 12rpx;
+		flex-direction: column;
+	}
+
+	.foot-time {
+		font-size: 22rpx;
+		color: #b6bdc9;
+	}
+
+	.foot-remark {
+		margin-top: 8rpx;
+		font-size: 22rpx;
+		color: #ff8f1f;
+		line-height: 34rpx;
+	}
+
+	.actions {
+		margin-top: 20rpx;
+		padding-top: 20rpx;
+		border-top-width: 1rpx;
+		border-top-color: #f4f5f8;
+		border-top-style: solid;
+		flex-direction: row;
+		justify-content: flex-end;
+	}
+
+	.act-btn {
+		padding: 12rpx 30rpx;
+		border-radius: 30rpx;
+		background-image: linear-gradient(to right, #2b6cff, #5f92ff);
+	}
+
+	.act-btn-text {
+		font-size: 24rpx;
+		color: #ffffff;
+	}
+
+	.act-btn-plain {
+		margin-left: 16rpx;
+		background-color: #f2f5fb;
+		background-image: none;
+	}
+
+	.act-btn-plain-text {
+		font-size: 24rpx;
+		color: #6b7280;
+	}
+
+	.remark-panel {
+		margin-top: 20rpx;
+		padding: 20rpx;
+		border-radius: 18rpx;
+		background-color: #f7f9fc;
+		flex-direction: column;
+	}
+
+	.remark-input {
+		width: 100%;
+		height: 140rpx;
+		font-size: 25rpx;
+		color: #1f2329;
+		line-height: 36rpx;
+	}
+
+	.remark-actions {
+		margin-top: 16rpx;
+		flex-direction: row;
+		justify-content: flex-end;
+	}
+
+	.remark-btn {
+		padding: 12rpx 30rpx;
+		border-radius: 30rpx;
+		background-image: linear-gradient(to right, #2b6cff, #5f92ff);
+	}
+
+	.remark-btn-text {
+		font-size: 24rpx;
+		color: #ffffff;
+	}
+
+	.remark-btn-plain {
+		margin-right: 16rpx;
+		background-color: #eef1f6;
+		background-image: none;
+	}
+
+	.remark-plain-text {
+		font-size: 24rpx;
+		color: #6b7280;
+	}
+
+	.empty {
+		margin: 60rpx 24rpx;
+		padding: 70rpx 0;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.empty-icon {
+		width: 110rpx;
+		height: 110rpx;
+		border-radius: 55rpx;
+		background-color: #e8f0ff;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.empty-icon-text {
+		font-size: 44rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.empty-title {
+		margin-top: 22rpx;
+		font-size: 27rpx;
+		color: #4b5563;
+	}
+
+	.empty-desc {
+		margin-top: 8rpx;
+		font-size: 23rpx;
+		color: #b6bdc9;
+	}
+
+	.load-tip {
+		padding: 24rpx 0;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.load-tip-text {
+		font-size: 23rpx;
+		color: #b6bdc9;
+	}
+
+	.bottom {
+		height: 40rpx;
+	}
+</style>

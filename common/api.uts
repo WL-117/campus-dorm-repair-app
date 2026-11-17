@@ -1,0 +1,243 @@
+/**
+ * 业务接口层：一个函数对应一个 RESTful 接口，页面只与 api 层交互
+ * 全部返回 Promise<ApiResult>，code == 0 表示业务成功
+ */
+import { ApiResult } from './types.uts'
+import { request } from './http.uts'
+import { getUserId } from './store.uts'
+
+/* --------------------------------- 用户相关 --------------------------------- */
+
+/** 注册：POST /user/register */
+export function apiRegister(username : string, password : string, nickname : string, phone : string, gender : string, dorm : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'username': username,
+		'password': password,
+		'nickname': nickname,
+		'phone': phone,
+		'gender': gender,
+		'dorm': dorm
+	}
+	return request('POST', '/user/register', p)
+}
+
+/** 登录：POST /user/login */
+export function apiLogin(username : string, password : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'username': username,
+		'password': password
+	}
+	return request('POST', '/user/login', p)
+}
+
+/** 查询用户信息：GET /user/info */
+export function apiUserInfo(userId : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = { 'userId': userId }
+	return request('GET', '/user/info', p)
+}
+
+/** 修改用户信息（昵称 / 头像 / 手机号 / 宿舍 / 性别）：PUT /user/update */
+export function apiUpdateUser(nickname : string, phone : string, avatar : string, gender : string, dorm : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'userId': getUserId(),
+		'nickname': nickname,
+		'phone': phone,
+		'avatar': avatar,
+		'gender': gender,
+		'dorm': dorm
+	}
+	return request('PUT', '/user/update', p)
+}
+
+/* --------------------------------- 工单相关 --------------------------------- */
+
+/** 提交报修：POST /repair/create */
+export function apiCreateOrder(category : string, building : string, room : string, contact : string, description : string, images : string[], level : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'userId': getUserId(),
+		'category': category,
+		'building': building,
+		'room': room,
+		'contact': contact,
+		'description': description,
+		'level': level
+	}
+	p['images'] = images
+	return request('POST', '/repair/create', p)
+}
+
+/**
+ * 工单列表：GET /repair/list
+ * scope = 'all' 查询全部工单（报修大厅）；scope = 'mine' 只查当前登录用户（个人报修记录）
+ */
+export function apiOrderList(page : number, size : number, status : string, scope : string, keyword : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'page': page,
+		'size': size,
+		'status': status,
+		'scope': scope,
+		'keyword': keyword
+	}
+	if (scope == 'mine') p['userId'] = getUserId()
+	return request('GET', '/repair/list', p)
+}
+
+/** 工单详情：GET /repair/detail */
+export function apiOrderDetail(id : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = { 'id': id }
+	return request('GET', '/repair/detail', p)
+}
+
+/** 修改工单：PUT /repair/update */
+export function apiUpdateOrder(id : string, description : string, contact : string, room : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'id': id,
+		'description': description,
+		'contact': contact,
+		'room': room
+	}
+	return request('PUT', '/repair/update', p)
+}
+
+/** 取消报修：POST /repair/cancel */
+export function apiCancelOrder(id : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'id': id,
+		'userId': getUserId()
+	}
+	return request('POST', '/repair/cancel', p)
+}
+
+/** 删除工单：DELETE /repair/delete */
+export function apiDeleteOrder(id : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'id': id,
+		'userId': getUserId()
+	}
+	return request('DELETE', '/repair/delete', p)
+}
+
+/** 个人工单统计：GET /stat/mine */
+export function apiStat() : Promise<ApiResult> {
+	const p : UTSJSONObject = { 'userId': getUserId() }
+	return request('GET', '/stat/mine', p)
+}
+
+/* -------------------------------- 常用数据 ---------------------------------- */
+
+/** 故障分类：GET /category/list */
+export function apiCategories() : Promise<ApiResult> {
+	const p : UTSJSONObject = {}
+	return request('GET', '/category/list', p)
+}
+
+/** 常见故障提示：GET /tips/list */
+export function apiTips() : Promise<ApiResult> {
+	const p : UTSJSONObject = {}
+	return request('GET', '/tips/list', p)
+}
+
+/** 公告列表：GET /notice/list */
+export function apiNoticeList() : Promise<ApiResult> {
+	const p : UTSJSONObject = {}
+	return request('GET', '/notice/list', p)
+}
+
+/** 公告详情：GET /notice/detail */
+export function apiNoticeDetail(id : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = { 'id': id }
+	return request('GET', '/notice/detail', p)
+}
+
+/* ------------------------------- 管理端接口 -------------------------------- */
+
+/** 管理端总览统计：GET /admin/stat */
+export function apiAdminStat() : Promise<ApiResult> {
+	const p : UTSJSONObject = { 'userId': getUserId() }
+	return request('GET', '/admin/stat', p)
+}
+
+/** 用户列表：GET /admin/user/list */
+export function apiAdminUserList(page : number, size : number, role : string, keyword : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'userId': getUserId(),
+		'page': page,
+		'size': size,
+		'role': role,
+		'keyword': keyword
+	}
+	return request('GET', '/admin/user/list', p)
+}
+
+/** 删除用户：DELETE /admin/user/delete */
+export function apiAdminDeleteUser(id : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'userId': getUserId(),
+		'id': id
+	}
+	return request('DELETE', '/admin/user/delete', p)
+}
+
+/** 工单管理列表：GET /admin/order/list */
+export function apiAdminOrderList(page : number, size : number, status : string, keyword : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'userId': getUserId(),
+		'page': page,
+		'size': size,
+		'status': status,
+		'keyword': keyword
+	}
+	return request('GET', '/admin/order/list', p)
+}
+
+/** 推进工单状态（维修中 / 已完成）：PUT /admin/order/status */
+export function apiAdminUpdateStatus(id : string, status : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'userId': getUserId(),
+		'id': id,
+		'status': status
+	}
+	return request('PUT', '/admin/order/status', p)
+}
+
+/** 填写处理备注：PUT /admin/order/remark */
+export function apiAdminRemark(id : string, remark : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'userId': getUserId(),
+		'id': id,
+		'remark': remark
+	}
+	return request('PUT', '/admin/order/remark', p)
+}
+
+/** 发布公告：POST /admin/notice/create */
+export function apiAdminNoticeCreate(title : string, content : string, tag : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'userId': getUserId(),
+		'title': title,
+		'content': content,
+		'tag': tag
+	}
+	return request('POST', '/admin/notice/create', p)
+}
+
+/** 修改公告：PUT /admin/notice/update */
+export function apiAdminNoticeUpdate(id : string, title : string, content : string, tag : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'userId': getUserId(),
+		'id': id,
+		'title': title,
+		'content': content,
+		'tag': tag
+	}
+	return request('PUT', '/admin/notice/update', p)
+}
+
+/** 删除公告：DELETE /admin/notice/delete */
+export function apiAdminNoticeDelete(id : string) : Promise<ApiResult> {
+	const p : UTSJSONObject = {
+		'userId': getUserId(),
+		'id': id
+	}
+	return request('DELETE', '/admin/notice/delete', p)
+}

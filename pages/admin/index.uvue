@@ -1,0 +1,627 @@
+<template>
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	<scroll-view class="page-scroll" :scroll-y="true" :bounces="false">
+	<!-- #endif -->
+
+	<view class="page">
+		<!-- 管理员身份卡片 -->
+		<view class="hero">
+			<view class="hero-top">
+				<view class="hero-avatar">
+					<text class="hero-avatar-text">管</text>
+				</view>
+				<view class="hero-info">
+					<text class="hero-name">{{adminName}}</text>
+					<text class="hero-sub">宿舍管理中心 · 系统管理员</text>
+				</view>
+				<view class="role-badge">
+					<text class="role-badge-text">管理员</text>
+				</view>
+			</view>
+
+			<view class="hero-card">
+				<view class="hero-cell" @click="goOrders('0')">
+					<text class="hero-num color-pending">{{stat.pending}}</text>
+					<text class="hero-label">待受理</text>
+				</view>
+				<view class="hero-split"></view>
+				<view class="hero-cell" @click="goOrders('1')">
+					<text class="hero-num color-doing">{{stat.doing}}</text>
+					<text class="hero-label">维修中</text>
+				</view>
+				<view class="hero-split"></view>
+				<view class="hero-cell" @click="goOrders('2')">
+					<text class="hero-num color-done">{{stat.done}}</text>
+					<text class="hero-label">已完成</text>
+				</view>
+			</view>
+		</view>
+
+		<!-- 平台数据 -->
+		<view class="section">
+			<view class="section-head">
+				<text class="section-bar"></text>
+				<text class="section-title">平台数据</text>
+			</view>
+			<view class="stat-grid">
+				<view class="stat-box">
+					<text class="stat-box-num">{{stat.orders}}</text>
+					<text class="stat-box-label">工单总数</text>
+				</view>
+				<view class="stat-box">
+					<text class="stat-box-num">{{stat.users}}</text>
+					<text class="stat-box-label">注册用户</text>
+				</view>
+				<view class="stat-box">
+					<text class="stat-box-num color-urgent">{{stat.urgent}}</text>
+					<text class="stat-box-label">紧急工单</text>
+				</view>
+				<view class="stat-box">
+					<text class="stat-box-num color-today">{{stat.todayOrders}}</text>
+					<text class="stat-box-label">今日新增</text>
+				</view>
+				<view class="stat-box">
+					<text class="stat-box-num">{{stat.students}}</text>
+					<text class="stat-box-label">学生</text>
+				</view>
+				<view class="stat-box">
+					<text class="stat-box-num">{{stat.admins}}</text>
+					<text class="stat-box-label">管理员</text>
+				</view>
+				<view class="stat-box">
+					<text class="stat-box-num">{{stat.canceled}}</text>
+					<text class="stat-box-label">已取消</text>
+				</view>
+				<view class="stat-box">
+					<text class="stat-box-num">{{stat.notices}}</text>
+					<text class="stat-box-label">公告</text>
+				</view>
+			</view>
+		</view>
+
+		<!-- 快捷管理 -->
+		<view class="section">
+			<view class="section-head">
+				<text class="section-bar"></text>
+				<text class="section-title">快捷管理</text>
+			</view>
+			<view class="entry-row">
+				<view class="entry-card" @click="goOrders('')">
+					<view class="entry-icon entry-icon-1">
+						<text class="entry-icon-text">单</text>
+					</view>
+					<text class="entry-name">工单管理</text>
+					<text class="entry-desc">受理 / 完成 / 备注</text>
+				</view>
+				<view class="entry-card" @click="goUsers">
+					<view class="entry-icon entry-icon-2">
+						<text class="entry-icon-text">员</text>
+					</view>
+					<text class="entry-name">用户管理</text>
+					<text class="entry-desc">查询 / 注销</text>
+				</view>
+				<view class="entry-card" @click="goNotices">
+					<view class="entry-icon entry-icon-3">
+						<text class="entry-icon-text">告</text>
+					</view>
+					<text class="entry-name">公告管理</text>
+					<text class="entry-desc">发布 / 删除</text>
+				</view>
+			</view>
+		</view>
+
+		<!-- 待处理工单 -->
+		<view class="section">
+			<view class="section-head">
+				<text class="section-bar"></text>
+				<text class="section-title">待处理工单</text>
+				<text class="section-more" @click="goOrders('0')">全部 ›</text>
+			</view>
+
+			<view class="card" v-if="pendingList.length > 0">
+				<view class="order-item" v-for="item in pendingList" :key="item.id">
+					<view class="order-head">
+						<text class="order-cat">{{item.category}}</text>
+						<text class="level-tag" v-if="item.level == '紧急'">紧急</text>
+					</view>
+					<text class="order-desc">{{item.description}}</text>
+					<view class="order-meta">
+						<text class="order-place">{{item.building}}-{{item.room}}</text>
+						<text class="order-user">{{item.userName}}</text>
+						<text class="order-time">{{item.createTime}}</text>
+					</view>
+					<view class="order-actions">
+						<view class="mini-btn" @click="accept(item.id)">
+							<text class="mini-btn-text">立即受理</text>
+						</view>
+						<view class="mini-btn mini-btn-plain" @click="openDetail(item.id)">
+							<text class="mini-btn-plain-text">查看详情</text>
+						</view>
+					</view>
+				</view>
+			</view>
+
+			<view class="empty" v-else>
+				<view class="empty-icon">
+					<text class="empty-icon-text">✓</text>
+				</view>
+				<text class="empty-title">暂无待处理工单</text>
+				<text class="empty-desc">同学们提交的报修会实时出现在这里</text>
+			</view>
+		</view>
+
+		<view class="bottom"></view>
+	</view>
+
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	</scroll-view>
+	<!-- #endif -->
+</template>
+
+<script setup lang="uts">
+	import { apiAdminStat, apiAdminOrderList, apiAdminUpdateStatus } from '../../common/api.uts'
+	import { AdminStat, RepairOrder, ApiResult } from '../../common/types.uts'
+	import { toAdminStat, plainToOrder, arrayVal } from '../../common/convert.uts'
+	import { toast, successToast, confirmDialog } from '../../common/util.uts'
+	import { getUser, isLogin, isAdmin } from '../../common/store.uts'
+
+	const adminName = ref('宿舍管理中心')
+	const stat = ref<AdminStat>({
+		users: 0,
+		students: 0,
+		admins: 0,
+		orders: 0,
+		pending: 0,
+		doing: 0,
+		done: 0,
+		canceled: 0,
+		urgent: 0,
+		todayOrders: 0,
+		notices: 0
+	})
+	const pendingList = ref<RepairOrder[]>([])
+
+	onPageShow(() => {
+		if (!isLogin()) {
+			uni.reLaunch({
+				url: '/pages/login/login'
+			})
+			return
+		}
+		if (!isAdmin()) {
+			toast('仅管理员可进入管理控制台')
+			uni.navigateBack()
+			return
+		}
+		const u = getUser()
+		adminName.value = u.nickname.length > 0 ? u.nickname : u.username
+		loadStat()
+		loadPending()
+	})
+
+	function loadStat() : void {
+		apiAdminStat().then((res : ApiResult) => {
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			stat.value = toAdminStat(res.data as UTSJSONObject)
+		})
+	}
+
+	function loadPending() : void {
+		apiAdminOrderList(1, 5, '0', '').then((res : ApiResult) => {
+			if (res.code != 0) return
+			const d = res.data as UTSJSONObject
+			const arr = arrayVal(d, 'list')
+			const list : RepairOrder[] = []
+			for (let i = 0; i < arr.length; i++) {
+				list.push(plainToOrder(arr[i]))
+			}
+			pendingList.value = list
+		})
+	}
+
+	function accept(id : string) : void {
+		confirmDialog('受理工单', '确认受理该报修工单并指派维修师傅？').then((yes : boolean) => {
+			if (!yes) return
+			apiAdminUpdateStatus(id, '1').then((res : ApiResult) => {
+				if (res.code != 0) {
+					toast(res.message)
+					return
+				}
+				successToast('已受理')
+				loadStat()
+				loadPending()
+			})
+		})
+	}
+
+	function goOrders(status : string) : void {
+		uni.navigateTo({
+			url: '/pages/admin/orders?status=' + status
+		})
+	}
+
+	function goUsers() : void {
+		uni.navigateTo({
+			url: '/pages/admin/users'
+		})
+	}
+
+	function goNotices() : void {
+		uni.navigateTo({
+			url: '/pages/admin/notices'
+		})
+	}
+
+	function openDetail(id : string) : void {
+		uni.navigateTo({
+			url: '/pages/repair/detail?id=' + id
+		})
+	}
+</script>
+
+<style>
+	page {
+		background-color: #f4f6fa;
+	}
+
+	.page {
+		flex-direction: column;
+		background-color: #f4f6fa;
+	}
+
+	.hero {
+		padding: 30rpx 30rpx 120rpx 30rpx;
+		background-image: linear-gradient(to bottom, #2b6cff, #5f92ff);
+		flex-direction: column;
+	}
+
+	.hero-top {
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.hero-avatar {
+		width: 92rpx;
+		height: 92rpx;
+		border-radius: 30rpx;
+		background-color: #ffffff;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.hero-avatar-text {
+		font-size: 38rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.hero-info {
+		flex: 1;
+		margin-left: 20rpx;
+		flex-direction: column;
+	}
+
+	.hero-name {
+		font-size: 34rpx;
+		font-weight: bold;
+		color: #ffffff;
+	}
+
+	.hero-sub {
+		margin-top: 6rpx;
+		font-size: 23rpx;
+		color: #dbe6ff;
+	}
+
+	.role-badge {
+		padding: 8rpx 18rpx;
+		border-radius: 24rpx;
+		background-color: rgba(255, 255, 255, 0.22);
+	}
+
+	.role-badge-text {
+		font-size: 22rpx;
+		color: #ffffff;
+	}
+
+	.hero-card {
+		margin-top: 30rpx;
+		height: 140rpx;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.hero-cell {
+		flex: 1;
+		flex-direction: column;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.hero-split {
+		width: 1rpx;
+		height: 56rpx;
+		background-color: #f0f1f4;
+	}
+
+	.hero-num {
+		font-size: 42rpx;
+		font-weight: bold;
+		color: #1f2329;
+	}
+
+	.hero-label {
+		margin-top: 6rpx;
+		font-size: 23rpx;
+		color: #8a94a6;
+	}
+
+	.color-pending {
+		color: #ff8f1f;
+	}
+
+	.color-doing {
+		color: #2b6cff;
+	}
+
+	.color-done {
+		color: #18a058;
+	}
+
+	.color-urgent {
+		color: #f5222d;
+	}
+
+	.color-today {
+		color: #7c3aed;
+	}
+
+	.section {
+		margin: 24rpx 24rpx 0 24rpx;
+	}
+
+	.section-head {
+		flex-direction: row;
+		align-items: center;
+		margin-bottom: 18rpx;
+	}
+
+	.section-bar {
+		width: 8rpx;
+		height: 28rpx;
+		border-radius: 4rpx;
+		background-color: #2b6cff;
+		margin-right: 12rpx;
+	}
+
+	.section-title {
+		flex: 1;
+		font-size: 30rpx;
+		font-weight: bold;
+		color: #1f2329;
+	}
+
+	.section-more {
+		font-size: 24rpx;
+		color: #8a94a6;
+	}
+
+	.stat-grid {
+		flex-direction: row;
+		flex-wrap: wrap;
+		background-color: #ffffff;
+		border-radius: 24rpx;
+		padding: 12rpx 0;
+	}
+
+	.stat-box {
+		width: 25%;
+		padding: 22rpx 0;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.stat-box-num {
+		font-size: 36rpx;
+		font-weight: bold;
+		color: #1f2329;
+	}
+
+	.stat-box-label {
+		margin-top: 6rpx;
+		font-size: 22rpx;
+		color: #8a94a6;
+	}
+
+	.entry-row {
+		flex-direction: row;
+	}
+
+	.entry-card {
+		flex: 1;
+		margin-right: 16rpx;
+		padding: 26rpx 16rpx;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.entry-card:last-child {
+		margin-right: 0;
+	}
+
+	.entry-icon {
+		width: 84rpx;
+		height: 84rpx;
+		border-radius: 26rpx;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.entry-icon-1 {
+		background-color: #e8f0ff;
+	}
+
+	.entry-icon-2 {
+		background-color: #fff1e6;
+	}
+
+	.entry-icon-3 {
+		background-color: #e8f7ee;
+	}
+
+	.entry-icon-text {
+		font-size: 34rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.entry-name {
+		margin-top: 14rpx;
+		font-size: 26rpx;
+		font-weight: bold;
+		color: #1f2329;
+	}
+
+	.entry-desc {
+		margin-top: 6rpx;
+		font-size: 21rpx;
+		color: #9aa0a6;
+	}
+
+	.card {
+		background-color: #ffffff;
+		border-radius: 24rpx;
+		padding: 8rpx 26rpx;
+	}
+
+	.order-item {
+		padding: 24rpx 0;
+		border-bottom-width: 1rpx;
+		border-bottom-color: #f4f5f8;
+		border-bottom-style: solid;
+		flex-direction: column;
+	}
+
+	.order-head {
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.order-cat {
+		font-size: 26rpx;
+		font-weight: bold;
+		color: #1f2329;
+	}
+
+	.level-tag {
+		margin-left: 12rpx;
+		padding: 4rpx 12rpx;
+		border-radius: 8rpx;
+		background-color: #ffece8;
+		color: #f5222d;
+		font-size: 20rpx;
+	}
+
+	.order-desc {
+		margin-top: 10rpx;
+		font-size: 25rpx;
+		color: #4b5563;
+		line-height: 38rpx;
+	}
+
+	.order-meta {
+		margin-top: 12rpx;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.order-place {
+		font-size: 22rpx;
+		color: #6b7280;
+	}
+
+	.order-user {
+		margin-left: 16rpx;
+		font-size: 22rpx;
+		color: #6b7280;
+	}
+
+	.order-time {
+		margin-left: 16rpx;
+		font-size: 22rpx;
+		color: #9aa0a6;
+	}
+
+	.order-actions {
+		margin-top: 18rpx;
+		flex-direction: row;
+		justify-content: flex-end;
+	}
+
+	.mini-btn {
+		padding: 12rpx 30rpx;
+		border-radius: 30rpx;
+		background-image: linear-gradient(to right, #2b6cff, #5f92ff);
+	}
+
+	.mini-btn-text {
+		font-size: 24rpx;
+		color: #ffffff;
+	}
+
+	.mini-btn-plain {
+		margin-left: 16rpx;
+		background-color: #f2f5fb;
+		background-image: none;
+	}
+
+	.mini-btn-plain-text {
+		font-size: 24rpx;
+		color: #6b7280;
+	}
+
+	.empty {
+		padding: 60rpx 0;
+		flex-direction: column;
+		align-items: center;
+		background-color: #ffffff;
+		border-radius: 24rpx;
+	}
+
+	.empty-icon {
+		width: 110rpx;
+		height: 110rpx;
+		border-radius: 55rpx;
+		background-color: #e8f7ee;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.empty-icon-text {
+		font-size: 48rpx;
+		color: #18a058;
+	}
+
+	.empty-title {
+		margin-top: 22rpx;
+		font-size: 27rpx;
+		color: #4b5563;
+	}
+
+	.empty-desc {
+		margin-top: 8rpx;
+		font-size: 23rpx;
+		color: #b6bdc9;
+	}
+
+	.bottom {
+		height: 40rpx;
+	}
+</style>

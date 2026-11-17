@@ -1,0 +1,413 @@
+<template>
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	<scroll-view class="page-scroll" :scroll-y="true" :bounces="false">
+	<!-- #endif -->
+
+	<view class="page">
+		<view class="search-bar">
+			<view class="search-box">
+				<text class="search-icon">⌕</text>
+				<input class="search-input" v-model="keyword" placeholder="搜索昵称 / 账号 / 手机号 / 宿舍" placeholder-class="ph" :maxlength="30" @confirm="doSearch" />
+				<text class="search-clear" v-if="keyword.length > 0" @click="clearKeyword">×</text>
+			</view>
+			<view class="search-btn" @click="doSearch">
+				<text class="search-btn-text">搜索</text>
+			</view>
+		</view>
+
+		<view class="tabs">
+			<view class="tab" v-for="(item, index) in tabs" :key="index" @click="switchTab(index)">
+				<text class="tab-text" :class="index == tabIndex ? 'tab-text-active' : ''">{{item.name}}</text>
+				<view class="tab-line" v-if="index == tabIndex"></view>
+			</view>
+		</view>
+
+		<view class="list">
+			<view class="user-card" v-for="item in list" :key="item.id">
+				<view class="user-avatar">
+					<text class="user-avatar-text">{{item.nickname.substring(0, 1)}}</text>
+				</view>
+				<view class="user-main">
+					<view class="user-name-row">
+						<text class="user-name">{{item.nickname}}</text>
+						<text class="role-tag" :class="item.role == 'admin' ? 'role-tag-admin' : 'role-tag-student'">{{item.role == 'admin' ? '管理员' : '学生'}}</text>
+					</view>
+					<text class="user-line">账号：{{item.username}}　工单：{{item.orderCount}} 条</text>
+					<text class="user-line">手机：{{item.phone}}</text>
+					<text class="user-line">宿舍：{{item.dorm.length > 0 ? item.dorm : '未填写'}}</text>
+					<text class="user-time">注册时间 {{item.createTime}}</text>
+				</view>
+				<view class="del-btn" v-if="item.role != 'admin'" @click="removeUser(item.id, item.nickname)">
+					<text class="del-btn-text">注销</text>
+				</view>
+			</view>
+		</view>
+
+		<view class="empty" v-if="list.length == 0 && !loading">
+			<view class="empty-icon">
+				<text class="empty-icon-text">员</text>
+			</view>
+			<text class="empty-title">没有找到相关用户</text>
+			<text class="empty-desc">换个关键词或筛选条件试试</text>
+		</view>
+
+		<view class="load-tip" v-if="list.length > 0">
+			<text class="load-tip-text">{{hasMore ? '上拉加载更多' : '已经到底啦'}}</text>
+		</view>
+
+		<view class="bottom"></view>
+	</view>
+
+	<!-- #ifdef APP && !VUE3-VAPOR -->
+	</scroll-view>
+	<!-- #endif -->
+</template>
+
+<script setup lang="uts">
+	import { apiAdminUserList, apiAdminDeleteUser } from '../../common/api.uts'
+	import { AdminUserItem, ApiResult, TabItem } from '../../common/types.uts'
+	import { toAdminUserItem, arrayVal, boolVal } from '../../common/convert.uts'
+	import { toast, successToast, confirmDialog } from '../../common/util.uts'
+	import { isLogin, isAdmin, getUserId } from '../../common/store.uts'
+
+	const PAGE_SIZE : number = 10
+	const ROLE_TABS : string[] = ['', 'student', 'admin']
+	const tabs = ref<TabItem[]>([
+		{ value: '', name: '全部' },
+		{ value: 'student', name: '学生' },
+		{ value: 'admin', name: '管理员' }
+	])
+	const tabIndex = ref(0)
+	const keyword = ref('')
+	const pageNo = ref(1)
+	const hasMore = ref(false)
+	const loading = ref(false)
+	const list = ref<AdminUserItem[]>([])
+
+	onPageShow(() => {
+		if (!isLogin()) {
+			uni.reLaunch({
+				url: '/pages/login/login'
+			})
+			return
+		}
+		if (!isAdmin()) {
+			toast('仅管理员可进入用户管理')
+			uni.navigateBack()
+			return
+		}
+		reload()
+	})
+
+	onPullDownRefresh(() => {
+		reload()
+	})
+
+	onReachBottom(() => {
+		if (!hasMore.value || loading.value) return
+		pageNo.value = pageNo.value + 1
+		loadList(false)
+	})
+
+	function reload() : void {
+		pageNo.value = 1
+		loadList(true)
+	}
+
+	function doSearch() : void {
+		reload()
+	}
+
+	function clearKeyword() : void {
+		keyword.value = ''
+		reload()
+	}
+
+	function switchTab(index : number) : void {
+		if (tabIndex.value == index) return
+		tabIndex.value = index
+		reload()
+	}
+
+	function loadList(reset : boolean) : void {
+		loading.value = true
+		apiAdminUserList(pageNo.value, PAGE_SIZE, ROLE_TABS[tabIndex.value], keyword.value).then((res : ApiResult) => {
+			loading.value = false
+			uni.stopPullDownRefresh()
+			if (res.code != 0) {
+				toast(res.message)
+				return
+			}
+			const d = res.data as UTSJSONObject
+			const arr = arrayVal(d, 'list')
+			const items : AdminUserItem[] = []
+			for (let i = 0; i < arr.length; i++) {
+				items.push(toAdminUserItem(arr[i]))
+			}
+			if (reset) {
+				list.value = items
+			} else {
+				const next : AdminUserItem[] = []
+				for (let i = 0; i < list.value.length; i++) {
+					next.push(list.value[i])
+				}
+				for (let i = 0; i < items.length; i++) {
+					next.push(items[i])
+				}
+				list.value = next
+			}
+			hasMore.value = boolVal(d, 'hasMore')
+		})
+	}
+
+	function removeUser(id : string, name : string) : void {
+		if (id == getUserId()) {
+			toast('不能注销当前登录的账号')
+			return
+		}
+		confirmDialog('注销用户', '确认注销「' + name + '」？其名下的报修工单将一并删除。').then((yes : boolean) => {
+			if (!yes) return
+			apiAdminDeleteUser(id).then((res : ApiResult) => {
+				if (res.code != 0) {
+					toast(res.message)
+					return
+				}
+				successToast('已注销')
+				reload()
+			})
+		})
+	}
+</script>
+
+<style>
+	page {
+		background-color: #f4f6fa;
+	}
+
+	.page {
+		flex-direction: column;
+		background-color: #f4f6fa;
+	}
+
+	.search-bar {
+		padding: 20rpx 24rpx;
+		background-color: #ffffff;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.search-box {
+		flex: 1;
+		height: 72rpx;
+		border-radius: 36rpx;
+		background-color: #f4f6fa;
+		flex-direction: row;
+		align-items: center;
+		padding: 0 22rpx;
+	}
+
+	.search-icon {
+		font-size: 30rpx;
+		color: #9aa0a6;
+		margin-right: 12rpx;
+	}
+
+	.search-input {
+		flex: 1;
+		font-size: 26rpx;
+		color: #1f2329;
+	}
+
+	.search-clear {
+		font-size: 32rpx;
+		color: #c3c9d4;
+		padding: 0 8rpx;
+	}
+
+	.search-btn {
+		margin-left: 16rpx;
+		padding: 0 30rpx;
+		height: 72rpx;
+		border-radius: 36rpx;
+		background-image: linear-gradient(to right, #2b6cff, #5f92ff);
+		justify-content: center;
+		align-items: center;
+	}
+
+	.search-btn-text {
+		font-size: 26rpx;
+		color: #ffffff;
+	}
+
+	.tabs {
+		padding: 0 12rpx;
+		background-color: #ffffff;
+		flex-direction: row;
+		border-bottom-width: 1rpx;
+		border-bottom-color: #f0f1f4;
+		border-bottom-style: solid;
+	}
+
+	.tab {
+		flex: 1;
+		height: 88rpx;
+		flex-direction: column;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.tab-text {
+		font-size: 26rpx;
+		color: #6b7280;
+	}
+
+	.tab-text-active {
+		font-size: 27rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.tab-line {
+		margin-top: 8rpx;
+		width: 44rpx;
+		height: 6rpx;
+		border-radius: 3rpx;
+		background-color: #2b6cff;
+	}
+
+	.list {
+		padding: 20rpx 24rpx 0 24rpx;
+	}
+
+	.user-card {
+		margin-bottom: 20rpx;
+		padding: 24rpx;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.user-avatar {
+		width: 92rpx;
+		height: 92rpx;
+		border-radius: 30rpx;
+		background-color: #e8f0ff;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.user-avatar-text {
+		font-size: 36rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.user-main {
+		flex: 1;
+		margin-left: 20rpx;
+		flex-direction: column;
+	}
+
+	.user-name-row {
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.user-name {
+		font-size: 28rpx;
+		font-weight: bold;
+		color: #1f2329;
+	}
+
+	.role-tag {
+		margin-left: 12rpx;
+		padding: 4rpx 14rpx;
+		border-radius: 8rpx;
+		font-size: 20rpx;
+	}
+
+	.role-tag-student {
+		background-color: #e8f0ff;
+		color: #2b6cff;
+	}
+
+	.role-tag-admin {
+		background-color: #fff1e6;
+		color: #ff8f1f;
+	}
+
+	.user-line {
+		margin-top: 6rpx;
+		font-size: 23rpx;
+		color: #6b7280;
+	}
+
+	.user-time {
+		margin-top: 8rpx;
+		font-size: 21rpx;
+		color: #b6bdc9;
+	}
+
+	.del-btn {
+		padding: 12rpx 24rpx;
+		border-radius: 30rpx;
+		background-color: #fff1f0;
+	}
+
+	.del-btn-text {
+		font-size: 23rpx;
+		color: #f5222d;
+	}
+
+	.empty {
+		margin: 60rpx 24rpx;
+		padding: 70rpx 0;
+		border-radius: 24rpx;
+		background-color: #ffffff;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.empty-icon {
+		width: 110rpx;
+		height: 110rpx;
+		border-radius: 55rpx;
+		background-color: #e8f0ff;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.empty-icon-text {
+		font-size: 44rpx;
+		font-weight: bold;
+		color: #2b6cff;
+	}
+
+	.empty-title {
+		margin-top: 22rpx;
+		font-size: 27rpx;
+		color: #4b5563;
+	}
+
+	.empty-desc {
+		margin-top: 8rpx;
+		font-size: 23rpx;
+		color: #b6bdc9;
+	}
+
+	.load-tip {
+		padding: 24rpx 0;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.load-tip-text {
+		font-size: 23rpx;
+		color: #b6bdc9;
+	}
+
+	.bottom {
+		height: 40rpx;
+	}
+</style>
