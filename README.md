@@ -20,6 +20,20 @@
 | --- | --- |
 | ![工单详情](docs/shot_detail.png) | ![管理端](docs/shot_admin_index.png) |
 
+## 架构与设计
+
+| 系统架构 | 数据库 ER 图 |
+| --- | --- |
+| ![系统架构](docs/system-architecture.png) | ![数据库 ER 图](docs/system-er-diagram.png) |
+
+| 功能结构 | 管理端结构 |
+| --- | --- |
+| ![功能结构](docs/system-function-structure.png) | ![管理端结构](docs/admin-structure.png) |
+
+| 报修流程 |
+| --- |
+| ![报修流程](docs/report-flow.png) |
+
 ## 功能
 
 **学生端**
